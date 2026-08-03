@@ -330,9 +330,14 @@ function usesDangerAwareness(persona){
   return persona.style === "trapper" || persona.skill === "advanced" || persona.skill === "expert";
 }
 
-// ---------- player profile storage ----------
-
-const PROFILES_KEY = "ginrummy_profiles_v1";
+// ---------- player profile storage (Firestore) ----------
+//
+// Saved players used to live in localStorage on a single device. They now
+// live in Firestore under users/{uid}, one document per signed-in user
+// holding a `profiles` array — same shape the app always used, just synced
+// across devices instead of pinned to one browser. window.firebaseDB is
+// set up by firebase-init.js before this ever runs (see the boot section
+// at the bottom of this file).
 
 function defaultSideStats(){
   return {
@@ -368,23 +373,28 @@ function migrateStatsIfNeeded(profile){
   return profile;
 }
 
-function loadProfiles(){
+async function loadProfiles(uid){
   try{
-    const raw = localStorage.getItem(PROFILES_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
+    const { db, doc, getDoc } = window.firebaseDB;
+    const snap = await getDoc(doc(db, "users", uid));
+    if (!snap.exists()) return [];
+    const data = snap.data();
+    const parsed = Array.isArray(data.profiles) ? data.profiles : [];
     return parsed.map(migrateStatsIfNeeded);
   } catch(e){
+    console.error("Could not load saved players from Firestore:", e);
     return [];
   }
 }
 
 function saveProfiles(profiles){
+  if (!state.currentUid) return;
   try{
-    localStorage.setItem(PROFILES_KEY, JSON.stringify(profiles));
+    const { db, doc, setDoc } = window.firebaseDB;
+    setDoc(doc(db, "users", state.currentUid), { profiles }, { merge: true })
+      .catch(e => console.error("Could not save players to Firestore:", e));
   } catch(e){
-    // storage unavailable (private mode, quota, etc.) — fail silently
+    console.error("Could not save players to Firestore:", e);
   }
 }
 
@@ -415,6 +425,7 @@ const state = {
   manualOrder: [],
   locked: false,
   profiles: [],
+  currentUid: null,
   opponent: DEFAULT_OPPONENT,
   humanPickupLog: [],
   handStartTime: null,
@@ -1655,8 +1666,25 @@ function openStatsModal(profile){
 el.statsCloseBtn.addEventListener("click", () => el.statsModal.classList.add("hidden"));
 
 // ---------- boot ----------
+//
+// The game no longer boots itself on script load. firebase-init.js calls
+// startGinRummyGame(uid) once someone's signed in (loading their saved
+// players from Firestore first), and stopGinRummyGame() when they sign
+// out, so a second person signing in on the same device never sees the
+// previous person's saved players.
 
-state.profiles = loadProfiles();
-newMatch();
+window.startGinRummyGame = function(uid){
+  state.currentUid = uid;
+  loadProfiles(uid).then(profiles => {
+    state.profiles = profiles;
+    newMatch();
+  });
+};
+
+window.stopGinRummyGame = function(){
+  state.currentUid = null;
+  state.profiles = [];
+  state.opponent = Object.assign({}, DEFAULT_OPPONENT);
+};
 
 })();

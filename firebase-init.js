@@ -18,6 +18,12 @@ import {
   signOut,
   onAuthStateChanged
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
+import {
+  getFirestore,
+  doc,
+  getDoc,
+  setDoc
+} from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCuMTfRWEAffVZW0IwVtNdqFo4e8S_xsmE",
@@ -32,6 +38,15 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const provider = new GoogleAuthProvider();
+const db = getFirestore(app);
+
+// game.js is a plain classic script (not a module), so it can't import
+// these directly. Expose the pieces it needs on window instead. game.js
+// only reaches for window.firebaseDB inside functions that run *after*
+// sign-in, by which point this module has already finished running, so
+// there's no ordering issue despite classic scripts and module scripts
+// loading on different timelines.
+window.firebaseDB = { db, doc, getDoc, setDoc };
 
 const overlay = document.getElementById("auth-overlay");
 const signInBtn = document.getElementById("google-signin-btn");
@@ -69,12 +84,16 @@ onAuthStateChanged(auth, (user) => {
     } else {
       userAvatar.classList.add("hidden");
     }
-    // Exposed for the next phase, when saved-player profiles move to
-    // Firestore and get keyed off this uid instead of localStorage.
     window.currentUser = user;
+    if (typeof window.startGinRummyGame === "function") {
+      window.startGinRummyGame(user.uid);
+    }
   } else {
     overlay.classList.remove("hidden");
     userBadge.classList.add("hidden");
     window.currentUser = null;
+    if (typeof window.stopGinRummyGame === "function") {
+      window.stopGinRummyGame();
+    }
   }
 });

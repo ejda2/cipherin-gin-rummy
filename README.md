@@ -13,10 +13,46 @@ screen. The original repo/deployment is untouched.
   badge (avatar, name, sign-out button) in the header.
 - `style.css` — added styling for the overlay and user badge only.
 
-Saved players and stats still live in this browser's local storage for
-now, same as the original. That moves to Firestore (synced per signed-in
-user, across devices) in the next phase, once sign-in itself is
-confirmed working.
+Saved players and stats now live in **Firestore**, not this browser's
+local storage. Each signed-in user gets one document, keyed by their
+Google account's uid, holding their saved players and stats:
+
+```
+users/{uid}
+  profiles: [ { id, name, gender, style, skill, stats: {...} }, ... ]
+```
+
+That's the same array shape the app always used for saved players, it's
+just stored under your account instead of pinned to one browser, so it
+follows you across devices.
+
+## Firestore setup (one-time, in addition to the Auth setup above)
+
+1. In the Firebase console, go to **Build → Firestore Database** (or
+   under **Databases & Storage**, depending on which console layout
+   you're seeing) and click **Create database**.
+2. Choose a location close to you (this can't be changed later, but it
+   doesn't meaningfully affect a small app like this).
+3. Start in **production mode**, not test mode. Test mode leaves the
+   database wide open to anyone for 30 days, which isn't something you
+   want even temporarily for an app with sign-in.
+4. Once the database exists, go to the **Rules** tab and replace the
+   default rules with:
+
+   ```
+   rules_version = '2';
+   service cloud.firestore {
+     match /databases/{database}/documents {
+       match /users/{userId} {
+         allow read, write: if request.auth != null && request.auth.uid == userId;
+       }
+     }
+   }
+   ```
+
+   This locks every user's document to that same user, nobody can read
+   or write anyone else's saved players, even other signed-in users of
+   this app. Click **Publish**.
 
 ## Firebase console setup (one-time)
 
