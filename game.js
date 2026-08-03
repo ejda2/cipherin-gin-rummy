@@ -478,6 +478,7 @@ const el = {
   confirmYesBtn: document.getElementById("confirm-yes-btn"),
   confirmNoBtn: document.getElementById("confirm-no-btn"),
   playersModal: document.getElementById("players-modal"),
+  playersRequiredNote: document.getElementById("players-required-note"),
   playersList: document.getElementById("players-list"),
   playerForm: document.getElementById("player-form"),
   playerFormTitle: document.getElementById("player-form-title"),
@@ -1003,9 +1004,19 @@ el.sortRankBtn.addEventListener("click", () => { state.sortMode = "rank"; render
 el.sortManualBtn.addEventListener("click", () => { state.sortMode = "manual"; renderAll(); });
 
 el.newMatchBtn.addEventListener("click", () => {
+  if (!state.opponent || !state.opponent.id){
+    promptForOpponent();
+    return;
+  }
   if (confirm("Start a new match? Current scores will be reset.")) newMatch();
 });
-el.restartBtn.addEventListener("click", newMatch);
+el.restartBtn.addEventListener("click", () => {
+  if (!state.opponent || !state.opponent.id){
+    promptForOpponent();
+    return;
+  }
+  newMatch();
+});
 
 // ---------- computer AI ----------
 
@@ -1451,8 +1462,23 @@ function openPlayersModal(){
   renderPlayersList();
   el.playerForm.classList.add("hidden");
   el.playersModal.classList.remove("hidden");
+  el.playersCloseBtn.classList.remove("hidden");
+  el.playersRequiredNote.classList.add("hidden");
 }
 el.playersBtn.addEventListener("click", openPlayersModal);
+
+// Used at first launch, and any time New Match is clicked without an
+// opponent chosen yet. Unlike openPlayersModal, this hides the Close
+// button and shows an explanatory note, since a match can't start until
+// someone's picked or created — there's nothing to save stats against
+// (or, later, for the adaptive opponent to learn from) otherwise.
+function promptForOpponent(){
+  renderPlayersList();
+  el.playerForm.classList.add("hidden");
+  el.playersModal.classList.remove("hidden");
+  el.playersCloseBtn.classList.add("hidden");
+  el.playersRequiredNote.classList.remove("hidden");
+}
 el.howToPlayBtn.addEventListener("click", () => el.rulesModal.classList.remove("hidden"));
 el.rulesCloseBtn.addEventListener("click", () => el.rulesModal.classList.add("hidden"));
 el.playersCloseBtn.addEventListener("click", () => el.playersModal.classList.add("hidden"));
@@ -1569,6 +1595,8 @@ function deleteProfile(id){
 
 function startMatchAgainst(profile){
   state.opponent = profile;
+  el.playersCloseBtn.classList.remove("hidden");
+  el.playersRequiredNote.classList.add("hidden");
   el.playersModal.classList.add("hidden");
   newMatch();
 }
@@ -1677,7 +1705,7 @@ window.startGinRummyGame = function(uid){
   state.currentUid = uid;
   loadProfiles(uid).then(profiles => {
     state.profiles = profiles;
-    newMatch();
+    promptForOpponent();
   });
 };
 

@@ -728,3 +728,11 @@ html, body{
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ---------- required opponent-selection notice ---------- */
+
+.required-note{
+  color: var(--brass);
+  font-weight: 600;
+  opacity: 1;
+}
