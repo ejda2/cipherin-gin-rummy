@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Cipherin Gin Rummy</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="auth-overlay" class="auth-overlay">
+  <div class="auth-card">
+    <div class="brand-mark">&#9827;&#9829;</div>
+    <h1>Cipherin Gin Rummy</h1>
+    <p class="auth-subtitle">Sign in to play and keep your saved opponents and stats.</p>
+    <button id="google-signin-btn" class="action-btn google-btn">
+      <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.9c1.7-1.57 2.7-3.88 2.7-6.62z"/><path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.9-2.26c-.8.54-1.84.86-3.06.86-2.36 0-4.35-1.59-5.06-3.73H.9v2.33A9 9 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.94 10.69A5.4 5.4 0 0 1 3.66 9c0-.59.1-1.16.28-1.69V4.98H.9A9 9 0 0 0 0 9c0 1.45.35 2.83.96 4.02z"/><path fill="#EA4335" d="M9 3.58c1.32 0 2.51.46 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0A9 9 0 0 0 .9 4.98l3.04 2.33C4.65 5.17 6.64 3.58 9 3.58z"/></svg>
+      Sign in with Google
+    </button>
+    <p id="auth-error" class="auth-error"></p>
+  </div>
+</div>
+
+<div class="table">
+
+  <header class="scorebar">
+    <div class="brand">
+      <span class="brand-mark">♣♥</span>
+      <div>
+        <h1>Cipherin Gin Rummy</h1>
+        <div id="opponent-line" class="opponent-line">vs Computer</div>
+      </div>
+    </div>
+    <div class="scores">
+      <div class="score-pill">
+        <span class="who">You</span>
+        <span id="player-score" class="num">0</span>
+      </div>
+      <div class="score-pill">
+        <span class="who" id="computer-score-label">Computer</span>
+        <span id="computer-score" class="num">0</span>
+      </div>
+      <div class="round-pill">Hand <span id="round-num">1</span></div>
+    </div>
+    <div class="header-actions">
+      <div id="user-badge" class="user-badge hidden">
+        <img id="user-avatar" class="user-avatar hidden" alt="">
+        <span id="user-name" class="user-name"></span>
+        <button id="sign-out-btn" class="chip-btn">Sign out</button>
+      </div>
+      <button id="how-to-play-btn" class="ghost-btn">How to Play</button>
+      <button id="players-btn" class="ghost-btn">Players</button>
+      <button id="new-match-btn" class="ghost-btn">New Match</button>
+    </div>
+  </header>
+
+  <section class="opponent-zone">
+    <div class="hand-label"><span id="computer-name-label">Computer</span> <span id="computer-count">10</span> cards</div>
+    <div id="computer-hand" class="hand computer-hand"></div>
+  </section>
+
+  <section class="middle-zone">
+    <div class="pile-group">
+      <div class="pile-wrap">
+        <div id="stock-pile" class="card card-back pile stock"></div>
+        <div class="pile-caption">Stock (<span id="stock-count">31</span>) &middot; double-tap</div>
+      </div>
+      <div class="pile-wrap">
+        <div id="discard-pile" class="card pile discard empty"></div>
+        <div class="pile-caption">Discard &middot; double-tap</div>
+      </div>
+    </div>
+
+    <div class="status-log" id="status-log">
+      <div class="log-line intro">Double-tap the stock or discard pile to draw, then double-tap a card to discard it.</div>
+    </div>
+  </section>
+
+  <section class="action-zone">
+    <div class="left-actions">
+      <button id="sort-suit-btn" class="chip-btn active">Sort by Suit</button>
+      <button id="sort-rank-btn" class="chip-btn">Sort by Value</button>
+      <button id="sort-manual-btn" class="chip-btn">Manual Order</button>
+    </div>
+    <div class="center-actions">
+      <button id="knock-btn" class="action-btn knock" disabled>Knock</button>
+    </div>
+    <div class="right-actions">
+      <span id="deadwood-readout" class="deadwood-readout"></span>
+    </div>
+  </section>
+
+  <section class="player-zone">
+    <div class="hand-label">Your hand <span id="player-count">10</span> cards &middot; tap to select, double-tap or drag to the discard pile to discard</div>
+    <div id="player-hand" class="hand player-hand"></div>
+  </section>
+
+</div>
+
+<div id="round-modal" class="modal hidden">
+  <div class="modal-card">
+    <h2 id="round-title">Round Result</h2>
+    <div id="round-body" class="round-body"></div>
+    <button id="continue-btn" class="action-btn">Continue</button>
+  </div>
+</div>
+
+<div id="match-modal" class="modal hidden">
+  <div class="modal-card extra-wide">
+    <h2 id="match-title">Match Over</h2>
+    <div id="match-body" class="round-body"></div>
+    <button id="restart-btn" class="action-btn">New Match</button>
+  </div>
+</div>
+
+<div id="confirm-modal" class="modal hidden">
+  <div class="modal-card">
+    <h2>Break up a meld?</h2>
+    <div id="confirm-body" class="round-body"></div>
+    <div class="modal-actions">
+      <button id="confirm-yes-btn" class="action-btn knock">Discard Anyway</button>
+      <button id="confirm-no-btn" class="action-btn ghost-btn-inline">Keep Card</button>
+    </div>
+  </div>
+</div>
+
+<div id="players-modal" class="modal hidden">
+  <div class="modal-card wide">
+    <h2>Players</h2>
+    <p class="modal-subtitle">Create up to 10 computer opponents, each with a playing style and skill level. Records are saved on this device.</p>
+    <div id="players-list" class="players-list"></div>
+    <div id="player-form" class="player-form hidden">
+      <h3 id="player-form-title">Add Player</h3>
+      <label>Name
+        <input id="pf-name" type="text" maxlength="24" placeholder="e.g. Rosa">
+      </label>
+      <label>Gender
+        <select id="pf-gender">
+          <option value="">Prefer not to say</option>
+          <option value="Female">Female</option>
+          <option value="Male">Male</option>
+          <option value="Non-binary">Non-binary</option>
+        </select>
+      </label>
+      <label>Playing Style
+        <select id="pf-style">
+          <option value="aggressive">Aggressive Knocker</option>
+          <option value="patient">Patient Gin Seeker</option>
+          <option value="trapper">Defensive Trapper</option>
+        </select>
+      </label>
+      <div id="pf-style-blurb" class="field-blurb"></div>
+      <label>Skill Level
+        <select id="pf-skill">
+          <option value="intermediate">Intermediate</option>
+          <option value="advanced">Advanced</option>
+          <option value="expert">Expert</option>
+        </select>
+      </label>
+      <div id="pf-skill-blurb" class="field-blurb"></div>
+      <div class="modal-actions">
+        <button id="pf-save-btn" class="action-btn">Save Player</button>
+        <button id="pf-cancel-btn" class="action-btn ghost-btn-inline">Cancel</button>
+      </div>
+    </div>
+    <div class="modal-actions" style="margin-top:14px;">
+      <button id="add-player-btn" class="action-btn">+ Add Player</button>
+      <button id="players-close-btn" class="action-btn ghost-btn-inline">Close</button>
+    </div>
+  </div>
+</div>
+
+<div id="rules-modal" class="modal hidden">
+  <div class="modal-card extra-wide">
+    <h2>How to Play</h2>
+    <div class="round-body rules-content">
+
+      <h3>The Goal</h3>
+      <p>Gin Rummy is played in a series of hands. Each hand you're racing
+      to arrange your cards into <strong>melds</strong> (sets or runs)
+      while minimizing the value of the cards left over. Whoever reaches
+      100 points first across all the hands wins the match.</p>
+
+      <h3>The Deal</h3>
+      <p>Each hand, you and the computer are dealt 10 cards. One card is
+      turned face-up to start the <strong>discard pile</strong>; the rest
+      form the <strong>stock pile</strong>, face-down. Players alternate
+      who deals — and who goes first — from hand to hand.</p>
+
+      <h3>Melds</h3>
+      <ul>
+        <li><strong>A set</strong> — three or four cards of the same rank (e.g. 7♠ 7♥ 7♦)</li>
+        <li><strong>A run</strong> — three or more consecutive cards of the same suit (e.g. 4♣ 5♣ 6♣)</li>
+      </ul>
+      <p>Any card not part of a meld is <strong>deadwood</strong>, scored
+      by rank: Ace = 1, 2–10 = face value, J/Q/K = 10.</p>
+
+      <h3>Your Turn</h3>
+      <p>Draw one card — from the stock (unseen) or the top of the
+      discard pile — then discard one card from your hand. Play passes
+      back and forth until someone ends the hand.</p>
+      <p>One restriction: if you drew from the discard pile, you can't
+      immediately discard that exact same card back — hold it for at
+      least this turn. Drawing from the stock has no such restriction.</p>
+
+      <h3>Ending a Hand</h3>
+      <ul>
+        <li><strong>Knock</strong> — if your discard leaves 10 or fewer deadwood points, you may knock and end the round.</li>
+        <li><strong>Gin</strong> — if your discard leaves zero deadwood, you go out with Gin, a stronger result.</li>
+        <li><strong>Wash</strong> — if the stock runs out with no knock, the hand ends with no score.</li>
+      </ul>
+
+      <h3>Scoring a Hand</h3>
+      <p><strong>If you knock:</strong> your opponent may lay off any
+      deadwood cards that extend your melds first. Whoever has less
+      deadwood after layoffs wins the hand and scores the difference. If
+      your opponent's deadwood ends up equal to or lower than yours,
+      they've <strong>undercut</strong> you — they win instead, plus a
+      25-point bonus.</p>
+      <p><strong>If you go Gin:</strong> your opponent can't lay off
+      anything. You score their full deadwood total, plus a 25-point
+      bonus.</p>
+
+      <h3>Winning the Match</h3>
+      <p>Once someone's running score reaches 100, a scorecard totals
+      the whole match:</p>
+      <table>
+        <tr><td>Game Bonus</td><td>100 points, awarded to whoever won the match</td></tr>
+        <tr><td>Line Bonus</td><td>25 points for every hand you won</td></tr>
+        <tr><td>Shutout Bonus</td><td>If your opponent never won a single hand, your final score doubles</td></tr>
+      </table>
+
+      <h3>Playing on This App</h3>
+      <ul>
+        <li><strong>Draw:</strong> double-tap the stock pile or the discard pile.</li>
+        <li><strong>Discard:</strong> double-tap a card in your hand, or drag it onto the discard pile.</li>
+        <li><strong>Knock:</strong> tap a card once to select it, then tap the Knock button.</li>
+        <li><strong>Sort your hand:</strong> Sort by Suit, Sort by Value, or drag cards into your own order under Manual Order.</li>
+        <li>Melds are grouped and labeled automatically in Sort by Suit/Value.</li>
+        <li>If a discard would break up an already-formed meld, the app warns you first.</li>
+        <li><strong>Players:</strong> create up to 10 computer opponents with their own name, playing style, and skill level. Click Stats next to any player to see your saved record against them.</li>
+      </ul>
+
+      <h3>A Few Tips</h3>
+      <ul>
+        <li>Low cards (Aces, 2s, 3s) are cheap to hold as deadwood while you wait for a meld to come together.</li>
+        <li>High cards hurt the most if you're stuck holding them — let go of ones that aren't working out.</li>
+        <li>Watch what your opponent picks up from the discard pile — it tells you what they need.</li>
+        <li>Knocking early is safer but caps your upside; going for Gin risks more but pays off bigger.</li>
+      </ul>
+
+    </div>
+    <button id="rules-close-btn" class="action-btn">Close</button>
+  </div>
+</div>
+
+<div id="stats-modal" class="modal hidden">
+  <div class="modal-card wide">
+    <h2 id="stats-title">Statistics</h2>
+    <table id="stats-meta-table" class="stats-meta-table"></table>
+    <div class="stats-columns">
+      <div class="stats-col">
+        <div class="stats-col-name">You</div>
+        <div class="stats-section-label">Hand statistics</div>
+        <table id="stats-you-hand" class="stats-table"></table>
+        <div class="stats-section-label">Game statistics</div>
+        <table id="stats-you-game" class="stats-table"></table>
+      </div>
+      <div class="stats-col">
+        <div class="stats-col-name" id="stats-opp-name">Opponent</div>
+        <div class="stats-section-label">Hand statistics</div>
+        <table id="stats-opp-hand" class="stats-table"></table>
+        <div class="stats-section-label">Game statistics</div>
+        <table id="stats-opp-game" class="stats-table"></table>
+      </div>
+    </div>
+    <div class="modal-actions" style="margin-top:14px;">
+      <button id="stats-close-btn" class="action-btn ghost-btn-inline">Close</button>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="firebase-init.js"></script>
+<script src="game.js"></script>
+</body>
+</html>
