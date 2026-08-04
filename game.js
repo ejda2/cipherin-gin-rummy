@@ -60,48 +60,6 @@ function suitClass(s){
   return "spades";
 }
 
-// Native "dblclick" is unreliable on iOS Safari, where a double-tap on an
-// element without special handling triggers the browser's zoom gesture
-// instead of two click events. This binds both a normal dblclick listener
-// (desktop mouse) and a manual double-tap detector off touchend, so the
-// same activation works consistently on phones and tablets.
-// Tracks the most recent tap globally (not per-DOM-node), keyed by a
-// stable id (a card's id, or "stock"/"discard"). This matters because a
-// single tap on a hand card also fires a "click" that selects it and
-// re-renders the whole hand into fresh DOM elements — if the tap timer
-// lived on the element itself, the second tap of a double-tap would land
-// on a brand-new element with no memory of the first tap.
-let lastTap = { key: null, time: 0, x: 0, y: 0 };
-
-function bindDoubleActivate(elem, key, handler){
-  let cooldown = false;
-
-  function fire(){
-    if (cooldown) return;
-    cooldown = true;
-    handler();
-    setTimeout(() => { cooldown = false; }, 400);
-  }
-
-  elem.addEventListener("dblclick", fire);
-
-  elem.addEventListener("touchend", (e) => {
-    const t = e.changedTouches && e.changedTouches[0];
-    const now = Date.now();
-    const x = t ? t.clientX : 0;
-    const y = t ? t.clientY : 0;
-    const dt = now - lastTap.time;
-    const moved = Math.abs(x - lastTap.x) > 28 || Math.abs(y - lastTap.y) > 28;
-    if (lastTap.key === key && dt > 0 && dt < 500 && !moved){
-      lastTap = { key: null, time: 0, x: 0, y: 0 };
-      e.preventDefault();
-      fire();
-    } else {
-      lastTap = { key, time: now, x, y };
-    }
-  }, { passive: false });
-}
-
 // ---------- meld / deadwood engine (subset DP over <=11 cards) ----------
 
 function combinations(arr, k){
@@ -611,7 +569,6 @@ function renderPlayerHand(){
       div.draggable = true;
       div.dataset.cardId = c.id;
       div.addEventListener("click", () => onPlayerCardClick(i));
-      bindDoubleActivate(div, `card-${c.id}`, () => onPlayerCardDblClick(i));
       div.addEventListener("dragstart", onDragStart);
       div.addEventListener("dragover", onDragOver);
       div.addEventListener("drop", onDrop);
@@ -633,7 +590,6 @@ function renderPlayerHand(){
       g.items.forEach(({ c, i }) => {
         const div = buildCardEl(c, meldIndexSet.has(i), state.selectedIndex === i);
         div.addEventListener("click", () => onPlayerCardClick(i));
-        bindDoubleActivate(div, `card-${c.id}`, () => onPlayerCardDblClick(i));
         bindCardDragToDiscard(div, c.id);
         row.appendChild(div);
       });
@@ -874,11 +830,19 @@ function onPlayerCardClick(i){
   renderAll();
 }
 
-function onPlayerCardDblClick(i){
+// Spacebar plays (discards) the currently selected card. Click still
+// selects; this replaces the old double-click-to-discard gesture.
+document.addEventListener("keydown", (e) => {
+  if (e.code !== "Space" && e.key !== " ") return;
+  const tag = document.activeElement && document.activeElement.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "BUTTON") return;
   if (state.turn !== "player" || state.phase !== "discard" || state.locked) return;
+  if (state.selectedIndex === null) return;
+  e.preventDefault();
+  const i = state.selectedIndex;
   state.selectedIndex = null;
   finalizeDiscard(i, false);
-}
+});
 
 function finalizeDiscard(i, asKnock){
   const hand = state.playerHand;
@@ -952,7 +916,7 @@ el.knockBtn.addEventListener("click", () => {
   finalizeDiscard(state.selectedIndex, true);
 });
 
-bindDoubleActivate(el.stockPile, "stock", () => {
+el.stockPile.addEventListener("click", () => {
   const isPlayerDraw = state.turn === "player" && state.phase === "draw" && !state.locked;
   if (!isPlayerDraw || state.stock.length <= 2) return;
   const card = state.stock.pop();
@@ -963,7 +927,7 @@ bindDoubleActivate(el.stockPile, "stock", () => {
   renderAll();
 });
 
-bindDoubleActivate(el.discardPile, "discard", () => {
+el.discardPile.addEventListener("click", () => {
   const isPlayerDraw = state.turn === "player" && state.phase === "draw" && !state.locked;
   if (!isPlayerDraw || state.discard.length === 0) return;
   const card = state.discard.pop();

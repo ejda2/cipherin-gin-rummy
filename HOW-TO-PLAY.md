@@ -86,10 +86,10 @@ scorecard. (For the full breakdown with a worked example, see the
 
 ## Playing on This App
 
-- **Draw:** double-tap the stock pile or the discard pile.
-- **Discard:** double-tap any card in your hand, **or** drag it onto
-  the discard pile.
-- **Knock:** tap a card once to select it, then tap the **Knock**
+- **Draw:** click the stock pile or the discard pile.
+- **Discard:** click a card in your hand to select it, then press the
+  **Space bar** (**or** drag it onto the discard pile).
+- **Knock:** click a card once to select it, then click the **Knock**
   button (only enabled when that discard would leave you at 10
   deadwood or less).
 - **Sort your hand:** use **Sort by Suit**, **Sort by Value**, or drag
