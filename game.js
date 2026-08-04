@@ -413,6 +413,7 @@ const el = {
   computerScore: document.getElementById("computer-score"),
   roundNum: document.getElementById("round-num"),
   statusLog: document.getElementById("status-log"),
+  discardBtn: document.getElementById("discard-btn"),
   knockBtn: document.getElementById("knock-btn"),
   sortSuitBtn: document.getElementById("sort-suit-btn"),
   sortRankBtn: document.getElementById("sort-rank-btn"),
@@ -751,6 +752,7 @@ function updateButtons(){
     canKnock = a.deadwoodPoints <= 10;
   }
   el.knockBtn.disabled = !canKnock;
+  el.discardBtn.disabled = !(isPlayerDiscard && state.selectedIndex !== null);
 
   el.sortSuitBtn.classList.toggle("active", state.sortMode === "suit");
   el.sortRankBtn.classList.toggle("active", state.sortMode === "rank");
@@ -830,18 +832,28 @@ function onPlayerCardClick(i){
   renderAll();
 }
 
-// Spacebar plays (discards) the currently selected card. Click still
-// selects; this replaces the old double-click-to-discard gesture.
+// Plays (discards) the currently selected card. Click still selects;
+// this is what the Space bar and the Discard button both trigger,
+// replacing the old double-click-to-discard gesture.
+function playSelectedCard(){
+  if (state.turn !== "player" || state.phase !== "discard" || state.locked) return;
+  if (state.selectedIndex === null) return;
+  const i = state.selectedIndex;
+  state.selectedIndex = null;
+  finalizeDiscard(i, false);
+}
+
 document.addEventListener("keydown", (e) => {
   if (e.code !== "Space" && e.key !== " ") return;
   const tag = document.activeElement && document.activeElement.tagName;
   if (tag === "INPUT" || tag === "TEXTAREA" || tag === "BUTTON") return;
-  if (state.turn !== "player" || state.phase !== "discard" || state.locked) return;
-  if (state.selectedIndex === null) return;
   e.preventDefault();
-  const i = state.selectedIndex;
-  state.selectedIndex = null;
-  finalizeDiscard(i, false);
+  playSelectedCard();
+});
+
+el.discardBtn.addEventListener("click", () => {
+  if (el.discardBtn.disabled) return;
+  playSelectedCard();
 });
 
 function finalizeDiscard(i, asKnock){

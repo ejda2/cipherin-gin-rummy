@@ -74,7 +74,7 @@
     </div>
 
     <div class="status-log" id="status-log">
-      <div class="log-line intro">Click the stock or discard pile to draw, select a card, then press Space to discard it.</div>
+      <div class="log-line intro">Click the stock or discard pile to draw, select a card, then press Space or tap Discard to play it.</div>
     </div>
   </section>
 
@@ -85,6 +85,7 @@
       <button id="sort-manual-btn" class="chip-btn">Manual Order</button>
     </div>
     <div class="center-actions">
+      <button id="discard-btn" class="action-btn discard" disabled>Discard</button>
       <button id="knock-btn" class="action-btn knock" disabled>Knock</button>
     </div>
     <div class="right-actions">
@@ -93,7 +94,7 @@
   </section>
 
   <section class="player-zone">
-    <div class="hand-label">Your hand <span id="player-count">10</span> cards &middot; click to select, press Space or drag to the discard pile to discard</div>
+    <div class="hand-label">Your hand <span id="player-count">10</span> cards &middot; click to select, then press Space, tap Discard, or drag to the discard pile</div>
     <div id="player-hand" class="hand player-hand"></div>
   </section>
 
@@ -236,7 +237,7 @@
       <h3>Playing on This App</h3>
       <ul>
         <li><strong>Draw:</strong> click the stock pile or the discard pile.</li>
-        <li><strong>Discard:</strong> click a card in your hand to select it, then press the Space bar (or drag it onto the discard pile).</li>
+        <li><strong>Discard:</strong> click a card in your hand to select it, then press the Space bar, tap the <strong>Discard</strong> button (for touch devices), or drag it onto the discard pile.</li>
         <li><strong>Knock:</strong> tap a card once to select it, then tap the Knock button.</li>
         <li><strong>Sort your hand:</strong> Sort by Suit, Sort by Value, or drag cards into your own order under Manual Order.</li>
         <li>Melds are grouped and labeled automatically in Sort by Suit/Value.</li>

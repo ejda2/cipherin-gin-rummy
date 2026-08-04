@@ -88,7 +88,8 @@ scorecard. (For the full breakdown with a worked example, see the
 
 - **Draw:** click the stock pile or the discard pile.
 - **Discard:** click a card in your hand to select it, then press the
-  **Space bar** (**or** drag it onto the discard pile).
+  **Space bar**, tap the **Discard** button (for phones and tablets),
+  **or** drag it onto the discard pile.
 - **Knock:** click a card once to select it, then click the **Knock**
   button (only enabled when that discard would leave you at 10
   deadwood or less).
