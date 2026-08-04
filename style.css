@@ -8,6 +8,7 @@
   --red-suit: #a6323b;
   --black-suit: #1c1a15;
   --club-suit: #1f7a43;
+  --diamond-suit: #6a3fa0;
   --panel: rgba(6, 26, 20, 0.55);
   --line: rgba(246, 241, 228, 0.14);
   font-size: 16px;
@@ -215,9 +216,10 @@ html, body{
   font-size: 2.4rem;
   opacity: 0.18;
 }
-.card.red .corner-rank, .card.red .corner-suit, .card.red .card-suit-center{ color: var(--red-suit); }
-.card.black .corner-rank, .card.black .corner-suit, .card.black .card-suit-center{ color: var(--black-suit); }
+.card.hearts .corner-rank, .card.hearts .corner-suit, .card.hearts .card-suit-center{ color: var(--red-suit); }
+.card.spades .corner-rank, .card.spades .corner-suit, .card.spades .card-suit-center{ color: var(--black-suit); }
 .card.clubs .corner-rank, .card.clubs .corner-suit, .card.clubs .card-suit-center{ color: var(--club-suit); }
+.card.diamonds .corner-rank, .card.diamonds .corner-suit, .card.diamonds .card-suit-center{ color: var(--diamond-suit); }
 
 .card-back{
   background-color: #0f3d2e;
@@ -734,5 +736,13 @@ html, body{
 .required-note{
   color: var(--brass);
   font-weight: 600;
+  opacity: 1;
+}
+
+/* ---------- learned-tendencies summary (Stats modal) ---------- */
+
+.tendencies-note{
+  color: var(--brass-bright);
+  font-style: italic;
   opacity: 1;
 }

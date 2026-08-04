@@ -7,11 +7,15 @@ screen. The original repo/deployment is untouched.
 ## What's new here vs. the original
 
 - `firebase-init.js` — handles Google sign-in/out and shows or hides
-  the game behind an overlay based on auth state. Nothing else in the
-  game changed: `game.js` is identical to the original.
+  the game behind an overlay based on auth state.
 - `index.html` — added the sign-in overlay markup and a small user
   badge (avatar, name, sign-out button) in the header.
-- `style.css` — added styling for the overlay and user badge only.
+- `style.css` — added styling for the overlay, user badge, the
+  required-opponent notice, and the learned-tendencies note.
+- `game.js` — saved players now live in Firestore instead of
+  localStorage; a match can't start without an opponent chosen; and
+  Advanced/Expert opponents track your play across games, not just
+  within a single match (see "The adaptive opponent" below).
 
 Saved players and stats now live in **Firestore**, not this browser's
 local storage. Each signed-in user gets one document, keyed by their
@@ -19,7 +23,7 @@ Google account's uid, holding their saved players and stats:
 
 ```
 users/{uid}
-  profiles: [ { id, name, gender, style, skill, stats: {...} }, ... ]
+  profiles: [ { id, name, gender, style, skill, stats: {...}, tendencies: {...} }, ... ]
 ```
 
 That's the same array shape the app always used for saved players, it's
@@ -108,12 +112,35 @@ Open `http://localhost:8000`. Google sign-in will work here since
    Firebase's **Authorized domains** list (step 6 above), or Google
    sign-in will fail on the live site with an unauthorized-domain error.
 
+## The adaptive opponent
+
+Advanced and Expert opponents track how you actually play against them,
+across every game, not just the current one. Each saved opponent has a
+`tendencies` object alongside their `stats`, updated once per finished
+hand:
+
+- `discardHighCardRate` — how often you let go of high cards vs. hold them
+- `stockPickupRate` — how often you draw from the stock vs. the discard pile
+- `avgKnockDeadwood` — how much deadwood you typically carry when you knock (0 = you favor Gin)
+- `avgKnockTurn` — how many draws into a hand you typically knock
+- `runPreference` — whether your finished melds lean toward runs or sets
+
+Each is an exponential moving average, so recent hands count more than
+old ones, and nothing swings wildly off a single unusual hand. It takes
+3 tracked hands before the computer starts acting on any of it.
+
+Two things change once there's enough data: the computer's own knock
+threshold nudges toward or away from yours (race a racer, relax against
+someone patient), and its read on which of your discards are risky
+shifts based on whether you favor runs or sets. Intermediate opponents
+skip all of this and just play their fixed style every time.
+
+Click **Stats** on any saved player to see a plain-language readout of
+what the computer's picked up on, right at the top of the stats screen.
+
 ## What's next
 
-Once sign-in is confirmed working end to end (sign in, see your name
-in the header, sign out, sign back in), the next phase moves saved
-player profiles from `localStorage` into Firestore under
-`users/{uid}/profiles/{profileId}`, so your saved opponents and stats
-follow you across devices. After that, the adaptive opponent logic
-(tracking your tendencies across games, not just within one match)
-builds on top of that same Firestore data.
+Auth, Firestore-backed profiles, and the adaptive opponent are all in
+place. Anything further, more tendency signals, a way to reset a
+player's learned read on you without deleting their whole stats
+history, etc., is open-ended from here.

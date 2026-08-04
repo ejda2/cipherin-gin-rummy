@@ -8,7 +8,6 @@
 const SUITS = ["S","H","D","C"];
 const SUIT_SYMBOL = { S:"\u2660", H:"\u2665", D:"\u2666", C:"\u2663" };
 const RANK_LABEL = ["", "A","2","3","4","5","6","7","8","9","10","J","Q","K"];
-const RED_SUITS = new Set(["H","D"]);
 const TARGET_SCORE = 100;
 const GIN_BONUS = 25;
 const UNDERCUT_BONUS = 25;
@@ -55,9 +54,10 @@ function cardLabel(c){
 // phones. Give clubs their own distinct color instead of lumping them in
 // with spades as plain "black" so the two are never confused at a glance.
 function suitClass(s){
-  if (RED_SUITS.has(s)) return "red";
+  if (s === "H") return "hearts";
+  if (s === "D") return "diamonds";
   if (s === "C") return "clubs";
-  return "black";
+  return "spades";
 }
 
 // Native "dblclick" is unreliable on iOS Safari, where a double-tap on an
