@@ -275,17 +275,31 @@ function groupLabel(type, items){
 
 // ---------- danger tracking for style/skill-aware AI ----------
 
-function dangerScore(card, pickupLog){
+function dangerScore(card, pickupLog, weights){
+  const w = weights || { rank: 2, run: 1 };
   let score = 0;
   for (const p of pickupLog){
-    if (card.r === p.r) score += 2;
-    else if (card.s === p.s && Math.abs(card.r - p.r) <= 2) score += 1;
+    if (card.r === p.r) score += w.rank;
+    else if (card.s === p.s && Math.abs(card.r - p.r) <= 2) score += w.run;
   }
   return score;
 }
 
 function usesDangerAwareness(persona){
   return persona.style === "trapper" || persona.skill === "advanced" || persona.skill === "expert";
+}
+
+// Once an Advanced/Expert opponent has learned a human's run-vs-set
+// leaning, shift how much a same-rank pickup vs. a suited-run pickup
+// counts toward "this discard looks risky." A human who favors runs
+// makes suited near-cards more worth avoiding; a set-leaning human
+// makes same-rank cards more worth avoiding.
+function dangerWeights(persona){
+  if (usesLearnedTendencies(persona) && persona.tendencies.runPreference !== null){
+    const rp = persona.tendencies.runPreference;
+    return { rank: 3 - 2 * rp, run: 0.5 + 1.5 * rp };
+  }
+  return { rank: 2, run: 1 };
 }
 
 // ---------- player profile storage (Firestore) ----------
@@ -328,7 +342,103 @@ function migrateStatsIfNeeded(profile){
   if (!profile.stats || !profile.stats.you || !profile.stats.opp){
     profile.stats = defaultStats();
   }
+  if (!profile.tendencies){
+    profile.tendencies = defaultTendencies();
+  }
   return profile;
+}
+
+// ---------- adaptive opponent: learned tendencies ----------
+//
+// Five signals, each an exponential moving average so recent hands count
+// more than old ones without any single odd hand swinging things wildly.
+// Updated once per finished hand (win, lose, or wash) via recordTendencies().
+// Only Advanced/Expert opponents act on this, and only once at least 3
+// hands are tracked — see usesLearnedTendencies() and the AI functions
+// below.
+
+const TENDENCIES_MIN_HANDS = 3;
+const TENDENCIES_ALPHA = 0.3;
+
+function defaultTendencies(){
+  return {
+    handsTracked: 0,
+    discardHighCardRate: null,
+    stockPickupRate: null,
+    avgKnockDeadwood: null,
+    avgKnockTurn: null,
+    runPreference: null
+  };
+}
+
+function usesLearnedTendencies(persona){
+  if (persona.skill !== "advanced" && persona.skill !== "expert") return false;
+  const t = persona.tendencies;
+  return !!(t && t.handsTracked >= TENDENCIES_MIN_HANDS);
+}
+
+function emaUpdate(prev, sample){
+  return (prev === null || prev === undefined) ? sample : prev + TENDENCIES_ALPHA * (sample - prev);
+}
+
+// Reads the counters accumulated this hand (state.humanHandStats) plus,
+// for hands the player knocked or ginned, the final hand shape, and folds
+// each available signal into the opponent's running tendencies.
+function recordTendencies(type, knocker){
+  if (!state.opponent || !state.opponent.id) return;
+  const profile = state.opponent;
+  if (!profile.tendencies) profile.tendencies = defaultTendencies();
+  const t = profile.tendencies;
+  const hd = state.humanHandStats;
+  const sample = {};
+
+  if (hd.discards > 0){
+    sample.discardHighCardRate = hd.highCardDiscards / hd.discards;
+  }
+  if (hd.draws > 0){
+    sample.stockPickupRate = hd.stockDraws / hd.draws;
+  }
+  if (type !== "wash" && knocker === "player"){
+    const finalAnalysis = analyzeHand(state.playerHand);
+    sample.avgKnockDeadwood = finalAnalysis.deadwoodPoints;
+    sample.avgKnockTurn = hd.draws;
+    if (finalAnalysis.meldMasks.length){
+      const runCount = finalAnalysis.meldMasks.filter(m => meldShape(state.playerHand, m).type === "run").length;
+      sample.runPreference = runCount / finalAnalysis.meldMasks.length;
+    }
+  }
+
+  const keys = Object.keys(sample);
+  if (!keys.length) return;
+  keys.forEach(key => { t[key] = emaUpdate(t[key], sample[key]); });
+  t.handsTracked += 1;
+}
+
+function describeTendencies(profile){
+  if (profile.skill !== "advanced" && profile.skill !== "expert"){
+    return `${profile.name} plays a fixed style — Intermediate opponents don't adapt to how you play.`;
+  }
+  const t = profile.tendencies || defaultTendencies();
+  const tracked = t.handsTracked || 0;
+  if (tracked < TENDENCIES_MIN_HANDS){
+    return `${profile.name} is still learning your tendencies (${tracked} hand${tracked === 1 ? "" : "s"} tracked so far).`;
+  }
+  const bits = [];
+  if (t.discardHighCardRate !== null){
+    bits.push(t.discardHighCardRate >= 0.5 ? "let go of high cards quickly" : "tend to hold onto high cards");
+  }
+  if (t.stockPickupRate !== null){
+    bits.push(t.stockPickupRate >= 0.7 ? "mostly draw from the stock" : "aren't shy about the discard pile");
+  }
+  if (t.avgKnockDeadwood !== null){
+    bits.push(t.avgKnockDeadwood <= 3 ? "usually hold out for Gin" : "tend to knock as soon as you can");
+  }
+  if (t.runPreference !== null){
+    if (t.runPreference >= 0.6) bits.push("favor runs over sets");
+    else if (t.runPreference <= 0.4) bits.push("favor sets over runs");
+  }
+  const summary = bits.length ? bits.join(", ") : "haven't shown a clear pattern yet";
+  return `Based on ${tracked} hands, you ${summary}. ${profile.name} adjusts its own knock timing and discards to that.`;
 }
 
 async function loadProfiles(uid){
@@ -455,6 +565,7 @@ const el = {
   statsTitle: document.getElementById("stats-title"),
   statsMetaTable: document.getElementById("stats-meta-table"),
   statsOppName: document.getElementById("stats-opp-name"),
+  statsTendenciesNote: document.getElementById("stats-tendencies-note"),
   statsYouHand: document.getElementById("stats-you-hand"),
   statsYouGame: document.getElementById("stats-you-game"),
   statsOppHand: document.getElementById("stats-opp-hand"),
@@ -795,6 +906,7 @@ function startRound(){
   state.selectedIndex = null;
   state.locked = false;
   state.humanPickupLog = [];
+  state.humanHandStats = { draws: 0, stockDraws: 0, discards: 0, highCardDiscards: 0 };
   state.handStartTime = Date.now();
   state.playerJustDrawnFromDiscardId = null;
   state.computerJustDrawnFromDiscardId = null;
@@ -895,6 +1007,8 @@ function performDiscard(i, asKnock){
   state.playerHand = remaining;
   state.discard.push(card);
   state.selectedIndex = null;
+  state.humanHandStats.discards += 1;
+  if (cardPoints(card.r) >= 10) state.humanHandStats.highCardDiscards += 1;
   log(`You discarded ${cardLabel(card)}.`, "you");
 
   if (a.deadwoodPoints === 0){
@@ -935,6 +1049,8 @@ el.stockPile.addEventListener("click", () => {
   state.playerHand.push(card);
   state.phase = "discard";
   state.playerJustDrawnFromDiscardId = null;
+  state.humanHandStats.draws += 1;
+  state.humanHandStats.stockDraws += 1;
   log("You drew from the stock.", "you");
   renderAll();
 });
@@ -947,6 +1063,7 @@ el.discardPile.addEventListener("click", () => {
   state.humanPickupLog.push(card);
   state.phase = "discard";
   state.playerJustDrawnFromDiscardId = card.id;
+  state.humanHandStats.draws += 1;
   log(`You drew ${cardLabel(card)} from the discard pile.`, "you");
   renderAll();
 });
@@ -1005,18 +1122,31 @@ function personaEffectiveStyle(persona){
   return persona.style;
 }
 
-function knockThreshold(style){
-  if (style === "patient") return 0;
-  if (style === "trapper") return 7;
-  return 10;
+// persona is optional so callers that don't have adaptive data (or don't
+// need it) can keep calling this with just a style string.
+function knockThreshold(style, persona){
+  let base;
+  if (style === "patient") base = 0;
+  else if (style === "trapper") base = 7;
+  else base = 10;
+
+  if (persona && usesLearnedTendencies(persona) && persona.tendencies.avgKnockDeadwood !== null){
+    // Nudge halfway toward matching the human's own knock pace — more
+    // aggressive against someone who knocks early with deadwood still on
+    // the table, more patient against someone who holds out for Gin.
+    const nudged = (base + persona.tendencies.avgKnockDeadwood) / 2;
+    base = Math.max(0, Math.min(10, Math.round(nudged)));
+  }
+  return base;
 }
 
 function pickWithDangerAwareness(candidates, persona, hand){
   if (candidates.length === 1) return candidates[0];
   if (usesDangerAwareness(persona) && state.humanPickupLog.length){
+    const weights = dangerWeights(persona);
     let bestC = candidates[0], bestScore = Infinity;
     for (const c of candidates){
-      const score = dangerScore(hand[c.discardIndex], state.humanPickupLog);
+      const score = dangerScore(hand[c.discardIndex], state.humanPickupLog, weights);
       if (score < bestScore){ bestScore = score; bestC = c; }
     }
     return bestC;
@@ -1040,7 +1170,7 @@ function computerChooseDraw(persona){
   if (bestWithDiscard < currentAnalysis.deadwoodPoints || bestWithDiscard <= 10) return "discard";
 
   if (persona.style === "trapper" && state.humanPickupLog.length){
-    const danger = dangerScore(topDiscard, state.humanPickupLog);
+    const danger = dangerScore(topDiscard, state.humanPickupLog, dangerWeights(persona));
     if (danger >= 2 && bestWithDiscard <= currentAnalysis.deadwoodPoints + 2) return "discard";
   }
   return "stock";
@@ -1083,7 +1213,7 @@ function computerTurn(){
     }
 
     const effectiveStyle = personaEffectiveStyle(persona);
-    const threshold = knockThreshold(effectiveStyle);
+    const threshold = knockThreshold(effectiveStyle, persona);
     const stockLow = state.stock.length <= 6;
     const canKnockNow = best.deadwood <= 10 && (best.deadwood <= threshold || stockLow);
 
@@ -1239,6 +1369,7 @@ function endRound({ type, knocker }){
   state.locked = true;
   state.phase = null;
   recordHandTiming();
+  recordTendencies(type, knocker);
 
   if (type === "wash"){
     state.roundHistory.push({ round: state.round, playerScore: 0, playerBonus: 0, computerScore: 0, computerBonus: 0, result: "Wash" });
@@ -1548,7 +1679,8 @@ el.pfSaveBtn.addEventListener("click", () => {
     const profile = {
       id: "p_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
       name, gender: el.pfGender.value, style: el.pfStyle.value, skill: el.pfSkill.value,
-      stats: defaultStats()
+      stats: defaultStats(),
+      tendencies: defaultTendencies()
     };
     state.profiles.push(profile);
   }
@@ -1648,6 +1780,7 @@ function openStatsModal(profile){
 
   el.statsTitle.textContent = `Statistics vs ${profile.name}`;
   el.statsOppName.textContent = profile.name;
+  el.statsTendenciesNote.textContent = describeTendencies(profile);
 
   el.statsMetaTable.innerHTML = `
     <tr><td>Statistics collected since</td><td class="num">${formatDate(stats.since)}</td></tr>
