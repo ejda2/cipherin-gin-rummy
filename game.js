@@ -1131,13 +1131,29 @@ function knockThreshold(style, persona){
   else base = 10;
 
   if (persona && usesLearnedTendencies(persona) && persona.tendencies.avgKnockDeadwood !== null){
-    // Nudge halfway toward matching the human's own knock pace — more
-    // aggressive against someone who knocks early with deadwood still on
-    // the table, more patient against someone who holds out for Gin.
-    const nudged = (base + persona.tendencies.avgKnockDeadwood) / 2;
+    // The more hands tracked, the more confident the read on the human's
+    // knock pace, so let it pull the threshold further from the base
+    // style instead of always splitting the difference 50/50 regardless
+    // of whether it's hand 3 or hand 80.
+    const extraHands = persona.tendencies.handsTracked - TENDENCIES_MIN_HANDS;
+    const confidence = Math.max(0, Math.min(1, extraHands / 20));
+    const blend = 0.3 + 0.5 * confidence; // 0.3 right at the gate, up to 0.8 with a long history
+    const nudged = base * (1 - blend) + persona.tendencies.avgKnockDeadwood * blend;
     base = Math.max(0, Math.min(10, Math.round(nudged)));
   }
   return base;
+}
+
+// How much deadwood the opponent will tolerate before knocking purely to
+// avoid a scoreless wash as the stock runs low. Anchored to the human's
+// own learned knock pace where available, so a conservative Trapper
+// doesn't suddenly gamble at near-max deadwood just because the stock
+// got thin — it widens its comfort zone a little, not all the way to 10.
+function stockLowKnockCap(threshold, persona){
+  if (usesLearnedTendencies(persona) && persona.tendencies.avgKnockDeadwood !== null){
+    return Math.max(threshold, Math.round((threshold + persona.tendencies.avgKnockDeadwood + 10) / 3));
+  }
+  return Math.max(threshold, 8);
 }
 
 function pickWithDangerAwareness(candidates, persona, hand){
@@ -1169,9 +1185,31 @@ function computerChooseDraw(persona){
 
   if (bestWithDiscard < currentAnalysis.deadwoodPoints || bestWithDiscard <= 10) return "discard";
 
-  if (persona.style === "trapper" && state.humanPickupLog.length){
+  if (usesDangerAwareness(persona) && state.humanPickupLog.length){
     const danger = dangerScore(topDiscard, state.humanPickupLog, dangerWeights(persona));
-    if (danger >= 2 && bestWithDiscard <= currentAnalysis.deadwoodPoints + 2) return "discard";
+    let denialThreshold = 2;
+    let deadwoodSlack = 2;
+
+    if (usesLearnedTendencies(persona)){
+      const t = persona.tendencies;
+      // A human who rarely draws from the stock is leaning on the
+      // discard pile — worth denying a marginal card before they get
+      // the chance to grab it themselves. One who mostly draws from the
+      // stock barely looks at the discard, so there's less to protect.
+      if (t.stockPickupRate !== null){
+        if (t.stockPickupRate <= 0.4){ denialThreshold -= 1; deadwoodSlack += 1; }
+        else if (t.stockPickupRate >= 0.8){ denialThreshold += 1; }
+      }
+      // A human who lets go of high cards quickly isn't the type to be
+      // sitting on a near-complete high-card meld, so a high-value
+      // discard is less likely to be something worth denying.
+      if (t.discardHighCardRate !== null && t.discardHighCardRate >= 0.6 && cardPoints(topDiscard.r) >= 10){
+        denialThreshold += 1;
+      }
+    }
+
+    denialThreshold = Math.max(1, denialThreshold);
+    if (danger >= denialThreshold && bestWithDiscard <= currentAnalysis.deadwoodPoints + deadwoodSlack) return "discard";
   }
   return "stock";
 }
@@ -1215,7 +1253,9 @@ function computerTurn(){
     const effectiveStyle = personaEffectiveStyle(persona);
     const threshold = knockThreshold(effectiveStyle, persona);
     const stockLow = state.stock.length <= 6;
-    const canKnockNow = best.deadwood <= 10 && (best.deadwood <= threshold || stockLow);
+    const criticallyLow = state.stock.length <= 3;
+    const stockLowCap = criticallyLow ? 10 : stockLowKnockCap(threshold, persona);
+    const canKnockNow = best.deadwood <= 10 && (best.deadwood <= threshold || (stockLow && best.deadwood <= stockLowCap));
 
     if (canKnockNow){
       const knockCandidates = options.filter(o => o.deadwood === best.deadwood);
