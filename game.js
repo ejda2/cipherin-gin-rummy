@@ -185,14 +185,46 @@ function analyzeHand(hand){
   return { deadwoodIdx, meldMasks, deadwoodPoints, totalPoints };
 }
 
+// How much unrealized meld material a set of cards is holding: pairs one
+// card away from a set, and same-suit cards within two ranks of each
+// other (one card away from a run). Used to break ties between discard
+// options that leave the same deadwood total but different structural
+// potential for the next few turns.
+function nearMeldPotential(cards){
+  let score = 0;
+  const byRank = new Map();
+  const bySuit = new Map();
+  cards.forEach(c => {
+    if (!byRank.has(c.r)) byRank.set(c.r, []);
+    byRank.get(c.r).push(c);
+    if (!bySuit.has(c.s)) bySuit.set(c.s, []);
+    bySuit.get(c.s).push(c);
+  });
+  byRank.forEach(list => { if (list.length === 2) score += 1; });
+  bySuit.forEach(list => {
+    const ranks = list.map(c => c.r).sort((a, b) => a - b);
+    for (let i = 0; i < ranks.length; i++){
+      for (let j = i + 1; j < ranks.length; j++){
+        if (ranks[j] - ranks[i] <= 2) score += 1;
+      }
+    }
+  });
+  return score;
+}
+
 function bestDiscardOptions(hand11){
   const options = [];
   for (let i = 0; i < hand11.length; i++){
     const remaining = hand11.filter((_, idx) => idx !== i);
     const a = analyzeHand(remaining);
-    options.push({ discardIndex: i, deadwood: a.deadwoodPoints, analysis: a, remaining });
+    const deadwoodCards = a.deadwoodIdx.map(idx => remaining[idx]);
+    const nearMelds = nearMeldPotential(deadwoodCards);
+    options.push({ discardIndex: i, deadwood: a.deadwoodPoints, analysis: a, remaining, nearMelds });
   }
-  options.sort((a, b) => a.deadwood - b.deadwood);
+  // Deadwood stays the primary sort key (this must never pick a worse
+  // discard). Among options that tie on deadwood, prefer keeping more
+  // near-meld potential alive instead of an arbitrary index order.
+  options.sort((a, b) => (a.deadwood - b.deadwood) || (b.nearMelds - a.nearMelds));
   return options;
 }
 
@@ -322,7 +354,10 @@ function defaultSideStats(){
     gameScoreSum: 0, gameScoreCount: 0, highestGameScore: 0,
     curGameWinStreak: 0, longestGameWinStreak: 0, curGameLoseStreak: 0, longestGameLoseStreak: 0,
     handsPerGameSum: 0, handsPerGameCount: 0,
-    shutoutCount: 0
+    shutoutCount: 0,
+    openingDeadwoodSum: 0, openingDeadwoodCount: 0,
+    wastedDraws: 0, totalDraws: 0,
+    discardPickupsUsed: 0, discardPickupsTotal: 0
   };
 }
 
@@ -341,9 +376,17 @@ function defaultStats(){
 function migrateStatsIfNeeded(profile){
   if (!profile.stats || !profile.stats.you || !profile.stats.opp){
     profile.stats = defaultStats();
+  } else {
+    // Merge onto the current defaults rather than overwrite, so profiles
+    // saved before a new field existed keep their accumulated numbers and
+    // just pick up the new field at its zero value.
+    profile.stats.you = Object.assign({}, defaultSideStats(), profile.stats.you);
+    profile.stats.opp = Object.assign({}, defaultSideStats(), profile.stats.opp);
   }
   if (!profile.tendencies){
     profile.tendencies = defaultTendencies();
+  } else {
+    profile.tendencies = Object.assign({}, defaultTendencies(), profile.tendencies);
   }
   return profile;
 }
@@ -367,7 +410,8 @@ function defaultTendencies(){
     stockPickupRate: null,
     avgKnockDeadwood: null,
     avgKnockTurn: null,
-    runPreference: null
+    runPreference: null,
+    wastedDrawRate: null
   };
 }
 
@@ -397,6 +441,7 @@ function recordTendencies(type, knocker){
   }
   if (hd.draws > 0){
     sample.stockPickupRate = hd.stockDraws / hd.draws;
+    sample.wastedDrawRate = hd.wastedDraws / hd.draws;
   }
   if (type !== "wash" && knocker === "player"){
     const finalAnalysis = analyzeHand(state.playerHand);
@@ -436,6 +481,9 @@ function describeTendencies(profile){
   if (t.runPreference !== null){
     if (t.runPreference >= 0.6) bits.push("favor runs over sets");
     else if (t.runPreference <= 0.4) bits.push("favor sets over runs");
+  }
+  if (t.wastedDrawRate !== null){
+    bits.push(t.wastedDrawRate >= 0.4 ? "draw without much of a plan" : "draw with a clear plan in mind");
   }
   const summary = bits.length ? bits.join(", ") : "haven't shown a clear pattern yet";
   return `Based on ${tracked} hands, you ${summary}. ${profile.name} adjusts its own knock timing and discards to that.`;
@@ -906,7 +954,9 @@ function startRound(){
   state.selectedIndex = null;
   state.locked = false;
   state.humanPickupLog = [];
-  state.humanHandStats = { draws: 0, stockDraws: 0, discards: 0, highCardDiscards: 0 };
+  state.computerPickupLog = [];
+  state.humanHandStats = { draws: 0, stockDraws: 0, discards: 0, highCardDiscards: 0, wastedDraws: 0 };
+  state.computerHandStats = { draws: 0, wastedDraws: 0 };
   state.handStartTime = Date.now();
   state.playerJustDrawnFromDiscardId = null;
   state.computerJustDrawnFromDiscardId = null;
@@ -920,6 +970,10 @@ function startRound(){
     state.playerHand.push(state.deck.pop());
     state.computerHand.push(state.deck.pop());
   }
+  state.openingDeadwood = {
+    you: analyzeHand(state.playerHand).deadwoodPoints,
+    opp: analyzeHand(state.computerHand).deadwoodPoints
+  };
   state.discard = [state.deck.pop()];
   state.stock = state.deck;
   state.manualOrder = state.playerHand.map(c => c.id);
@@ -1045,12 +1099,16 @@ el.knockBtn.addEventListener("click", () => {
 el.stockPile.addEventListener("click", () => {
   const isPlayerDraw = state.turn === "player" && state.phase === "draw" && !state.locked;
   if (!isPlayerDraw || state.stock.length <= 2) return;
+  const beforeDeadwood = analyzeHand(state.playerHand).deadwoodPoints;
   const card = state.stock.pop();
   state.playerHand.push(card);
   state.phase = "discard";
   state.playerJustDrawnFromDiscardId = null;
   state.humanHandStats.draws += 1;
   state.humanHandStats.stockDraws += 1;
+  if (bestDiscardOptions(state.playerHand)[0].deadwood >= beforeDeadwood){
+    state.humanHandStats.wastedDraws += 1;
+  }
   log("You drew from the stock.", "you");
   renderAll();
 });
@@ -1058,12 +1116,16 @@ el.stockPile.addEventListener("click", () => {
 el.discardPile.addEventListener("click", () => {
   const isPlayerDraw = state.turn === "player" && state.phase === "draw" && !state.locked;
   if (!isPlayerDraw || state.discard.length === 0) return;
+  const beforeDeadwood = analyzeHand(state.playerHand).deadwoodPoints;
   const card = state.discard.pop();
   state.playerHand.push(card);
   state.humanPickupLog.push(card);
   state.phase = "discard";
   state.playerJustDrawnFromDiscardId = card.id;
   state.humanHandStats.draws += 1;
+  if (bestDiscardOptions(state.playerHand)[0].deadwood >= beforeDeadwood){
+    state.humanHandStats.wastedDraws += 1;
+  }
   log(`You drew ${cardLabel(card)} from the discard pile.`, "you");
   renderAll();
 });
@@ -1131,29 +1193,13 @@ function knockThreshold(style, persona){
   else base = 10;
 
   if (persona && usesLearnedTendencies(persona) && persona.tendencies.avgKnockDeadwood !== null){
-    // The more hands tracked, the more confident the read on the human's
-    // knock pace, so let it pull the threshold further from the base
-    // style instead of always splitting the difference 50/50 regardless
-    // of whether it's hand 3 or hand 80.
-    const extraHands = persona.tendencies.handsTracked - TENDENCIES_MIN_HANDS;
-    const confidence = Math.max(0, Math.min(1, extraHands / 20));
-    const blend = 0.3 + 0.5 * confidence; // 0.3 right at the gate, up to 0.8 with a long history
-    const nudged = base * (1 - blend) + persona.tendencies.avgKnockDeadwood * blend;
+    // Nudge halfway toward matching the human's own knock pace — more
+    // aggressive against someone who knocks early with deadwood still on
+    // the table, more patient against someone who holds out for Gin.
+    const nudged = (base + persona.tendencies.avgKnockDeadwood) / 2;
     base = Math.max(0, Math.min(10, Math.round(nudged)));
   }
   return base;
-}
-
-// How much deadwood the opponent will tolerate before knocking purely to
-// avoid a scoreless wash as the stock runs low. Anchored to the human's
-// own learned knock pace where available, so a conservative Trapper
-// doesn't suddenly gamble at near-max deadwood just because the stock
-// got thin — it widens its comfort zone a little, not all the way to 10.
-function stockLowKnockCap(threshold, persona){
-  if (usesLearnedTendencies(persona) && persona.tendencies.avgKnockDeadwood !== null){
-    return Math.max(threshold, Math.round((threshold + persona.tendencies.avgKnockDeadwood + 10) / 3));
-  }
-  return Math.max(threshold, 8);
 }
 
 function pickWithDangerAwareness(candidates, persona, hand){
@@ -1175,6 +1221,16 @@ function pickWithDangerAwareness(candidates, persona, hand){
   return bestC;
 }
 
+// Blends a discard option's immediate deadwood with how much meld
+// material it leaves behind, so an Expert opponent doesn't always take
+// the single greediest discard when a slightly-worse-looking one keeps
+// more structure alive for the next turn or two. Only Expert personas use
+// this — everyone else keeps the simple greedy-deadwood comparison.
+function expertHandScore(option){
+  const deadwoodCards = option.analysis.deadwoodIdx.map(idx => option.remaining[idx]);
+  return option.deadwood - 0.75 * nearMeldPotential(deadwoodCards);
+}
+
 function computerChooseDraw(persona){
   const currentAnalysis = analyzeHand(state.computerHand);
   if (state.discard.length === 0) return "stock";
@@ -1185,31 +1241,19 @@ function computerChooseDraw(persona){
 
   if (bestWithDiscard < currentAnalysis.deadwoodPoints || bestWithDiscard <= 10) return "discard";
 
-  if (usesDangerAwareness(persona) && state.humanPickupLog.length){
+  // A card that completes a pair or sits within striking distance of a
+  // same-suit card already in hand is worth taking even when it doesn't
+  // move the deadwood number this turn — the greedy comparison above only
+  // sees one turn ahead and misses hands that are being built toward.
+  const currentNearMelds = nearMeldPotential(state.computerHand);
+  const withCardNearMelds = nearMeldPotential(state.computerHand.concat([topDiscard]));
+  if (withCardNearMelds > currentNearMelds && bestWithDiscard <= currentAnalysis.deadwoodPoints + 3){
+    return "discard";
+  }
+
+  if (persona.style === "trapper" && state.humanPickupLog.length){
     const danger = dangerScore(topDiscard, state.humanPickupLog, dangerWeights(persona));
-    let denialThreshold = 2;
-    let deadwoodSlack = 2;
-
-    if (usesLearnedTendencies(persona)){
-      const t = persona.tendencies;
-      // A human who rarely draws from the stock is leaning on the
-      // discard pile — worth denying a marginal card before they get
-      // the chance to grab it themselves. One who mostly draws from the
-      // stock barely looks at the discard, so there's less to protect.
-      if (t.stockPickupRate !== null){
-        if (t.stockPickupRate <= 0.4){ denialThreshold -= 1; deadwoodSlack += 1; }
-        else if (t.stockPickupRate >= 0.8){ denialThreshold += 1; }
-      }
-      // A human who lets go of high cards quickly isn't the type to be
-      // sitting on a near-complete high-card meld, so a high-value
-      // discard is less likely to be something worth denying.
-      if (t.discardHighCardRate !== null && t.discardHighCardRate >= 0.6 && cardPoints(topDiscard.r) >= 10){
-        denialThreshold += 1;
-      }
-    }
-
-    denialThreshold = Math.max(1, denialThreshold);
-    if (danger >= denialThreshold && bestWithDiscard <= currentAnalysis.deadwoodPoints + deadwoodSlack) return "discard";
+    if (danger >= 2 && bestWithDiscard <= currentAnalysis.deadwoodPoints + 2) return "discard";
   }
   return "stock";
 }
@@ -1217,17 +1261,23 @@ function computerChooseDraw(persona){
 function computerTurn(){
   const persona = state.opponent;
   const draw = computerChooseDraw(persona);
+  const beforeDeadwood = analyzeHand(state.computerHand).deadwoodPoints;
   let drawnCard;
   if (draw === "discard" && state.discard.length > 0){
     drawnCard = state.discard.pop();
     state.computerHand.push(drawnCard);
     state.computerJustDrawnFromDiscardId = drawnCard.id;
+    state.computerPickupLog.push(drawnCard);
     log(`${oppName()} drew ${cardLabel(drawnCard)} from the discard pile.`, "comp");
   } else {
     drawnCard = state.stock.pop();
     state.computerHand.push(drawnCard);
     state.computerJustDrawnFromDiscardId = null;
     log(`${oppName()} drew from the stock.`, "comp");
+  }
+  state.computerHandStats.draws += 1;
+  if (bestDiscardOptions(state.computerHand)[0].deadwood >= beforeDeadwood){
+    state.computerHandStats.wastedDraws += 1;
   }
   renderAll();
 
@@ -1253,9 +1303,7 @@ function computerTurn(){
     const effectiveStyle = personaEffectiveStyle(persona);
     const threshold = knockThreshold(effectiveStyle, persona);
     const stockLow = state.stock.length <= 6;
-    const criticallyLow = state.stock.length <= 3;
-    const stockLowCap = criticallyLow ? 10 : stockLowKnockCap(threshold, persona);
-    const canKnockNow = best.deadwood <= 10 && (best.deadwood <= threshold || (stockLow && best.deadwood <= stockLowCap));
+    const canKnockNow = best.deadwood <= 10 && (best.deadwood <= threshold || stockLow);
 
     if (canKnockNow){
       const knockCandidates = options.filter(o => o.deadwood === best.deadwood);
@@ -1269,8 +1317,18 @@ function computerTurn(){
       return;
     }
 
-    const nearBest = options.filter(o => o.deadwood <= best.deadwood + 1);
-    const chosen = pickWithDangerAwareness(nearBest, persona, hand);
+    let candidatePool;
+    if (persona.skill === "expert"){
+      // Look a bit further afield than the single best-deadwood discard
+      // and rank the window by structural potential rather than deadwood
+      // alone — a stand-in for looking a couple of turns ahead.
+      const widerPool = options.filter(o => o.deadwood <= best.deadwood + 2);
+      const bestScore = Math.min(...widerPool.map(expertHandScore));
+      candidatePool = widerPool.filter(o => expertHandScore(o) <= bestScore + 0.01);
+    } else {
+      candidatePool = options.filter(o => o.deadwood <= best.deadwood + 1);
+    }
+    const chosen = pickWithDangerAwareness(candidatePool, persona, hand);
     const card = hand[chosen.discardIndex];
     state.computerHand = chosen.remaining;
     state.discard.push(card);
@@ -1299,6 +1357,56 @@ function recordHandTiming(){
   stats.totalHandTimeMs += elapsed;
   stats.shortestHandMs = (stats.shortestHandMs === null) ? elapsed : Math.min(stats.shortestHandMs, elapsed);
   stats.longestHandMs = (stats.longestHandMs === null) ? elapsed : Math.max(stats.longestHandMs, elapsed);
+  saveProfiles(state.profiles);
+}
+
+// Of the cards a side drew from the discard pile this hand, how many were
+// still in their final hand AND part of a meld — i.e. the pickup actually
+// paid off, rather than getting drawn and later discarded unused.
+function meldUtilizationCount(pickupLog, hand, meldMasks){
+  if (!pickupLog || !pickupLog.length) return { used: 0, total: 0 };
+  let used = 0;
+  pickupLog.forEach(card => {
+    const idx = hand.findIndex(c => c.id === card.id);
+    if (idx === -1) return;
+    if (meldMasks.some(m => m & (1 << idx))) used++;
+  });
+  return { used, total: pickupLog.length };
+}
+
+// Opening-deadwood baseline, wasted-draw rate, and discard-pickup
+// utilization for both sides — recorded once per finished (non-wash) hand
+// alongside the win/loss numbers in recordHandOutcome.
+function recordHandDetailStats(playerAnalysis, computerAnalysis){
+  if (!state.opponent || !state.opponent.id) return;
+  const stats = state.opponent.stats;
+  const you = stats.you, opp = stats.opp;
+  const hd = state.humanHandStats;
+  const cd = state.computerHandStats;
+
+  if (state.openingDeadwood){
+    you.openingDeadwoodSum += state.openingDeadwood.you;
+    you.openingDeadwoodCount += 1;
+    opp.openingDeadwoodSum += state.openingDeadwood.opp;
+    opp.openingDeadwoodCount += 1;
+  }
+
+  if (hd){
+    you.totalDraws += hd.draws;
+    you.wastedDraws += hd.wastedDraws;
+  }
+  if (cd){
+    opp.totalDraws += cd.draws;
+    opp.wastedDraws += cd.wastedDraws;
+  }
+
+  const yourPickups = meldUtilizationCount(state.humanPickupLog, state.playerHand, playerAnalysis.meldMasks);
+  you.discardPickupsUsed += yourPickups.used;
+  you.discardPickupsTotal += yourPickups.total;
+  const oppPickups = meldUtilizationCount(state.computerPickupLog, state.computerHand, computerAnalysis.meldMasks);
+  opp.discardPickupsUsed += oppPickups.used;
+  opp.discardPickupsTotal += oppPickups.total;
+
   saveProfiles(state.profiles);
 }
 
@@ -1421,6 +1529,7 @@ function endRound({ type, knocker }){
 
   const playerAnalysis = analyzeHand(state.playerHand);
   const computerAnalysis = analyzeHand(state.computerHand);
+  recordHandDetailStats(playerAnalysis, computerAnalysis);
 
   let title, bodyHtml;
 
@@ -1790,9 +1899,12 @@ function buildHandRows(side, handsTotal){
     ["Lowest score", side.lowestScore ?? 0],
     ["Highest score", side.highestScore ?? 0],
     ["Average deadwood", safeAvg(side.deadwoodSum, side.deadwoodCount, 1)],
+    ["Average opening deadwood", safeAvg(side.openingDeadwoodSum, side.openingDeadwoodCount, 1)],
     ["Knock count", pctPair(side.knockCount, handsTotal)],
     ["Gin count", pctPair(side.ginCount, handsTotal)],
     ["Undercut count", pctPair(side.undercutCount, handsTotal)],
+    ["Wasted draws", pctPair(side.wastedDraws, side.totalDraws)],
+    ["Discard pickups used in melds", pctPair(side.discardPickupsUsed, side.discardPickupsTotal)],
     ["Current winning streak", side.curWinStreak],
     ["Longest winning streak", side.longestWinStreak],
     ["Longest losing streak", side.longestLoseStreak],
