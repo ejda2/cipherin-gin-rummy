@@ -536,6 +536,7 @@ const state = {
   opponent: DEFAULT_OPPONENT,
   humanPickupLog: [],
   publicHistory: null,
+  humanBaitFlag: false,
   handStartTime: null,
   roundHistory: [],
   playerJustDrawnFromDiscardId: null,
@@ -948,6 +949,7 @@ function startRound(){
   state.locked = false;
   state.humanPickupLog = [];
   if (!state.publicHistory) state.publicHistory = defaultPublicHistory();
+  state.humanBaitFlag = false;
   state.humanHandStats = { draws: 0, stockDraws: 0, discards: 0, highCardDiscards: 0 };
   state.handStartTime = Date.now();
   state.playerJustDrawnFromDiscardId = null;
@@ -1056,6 +1058,17 @@ function performDiscard(i, asKnock){
   // A card thrown right back out was never really "kept" — drop it from
   // this hand's pickup log so it doesn't get archived as a wanted card.
   state.humanPickupLog = state.humanPickupLog.filter(c => c.id !== card.id);
+  // Discarding an Ace or a 2 early is a classic knock-bait: it makes your
+  // hand look thin so the opponent knocks early, only to get undercut by
+  // a stronger hand than expected. Opponents that pay attention to your
+  // hand at all (trapper style, or Advanced/Expert skill) pick up on this
+  // and stop offering easy knocks for the rest of the hand.
+  if ((card.r === 1 || card.r === 2) && !state.humanBaitFlag){
+    state.humanBaitFlag = true;
+    if (state.opponent && state.opponent.id && usesDangerAwareness(state.opponent)){
+      log(`${oppName()} notices you letting go of a low card and will play cagey, holding out for Gin this hand.`, "comp");
+    }
+  }
   log(`You discarded ${cardLabel(card)}.`, "you");
 
   if (a.deadwoodPoints === 0){
@@ -1349,7 +1362,14 @@ function computerTurn(){
     }
 
     const effectiveStyle = personaEffectiveStyle(persona);
-    const threshold = knockThreshold(effectiveStyle, persona);
+    let threshold = knockThreshold(effectiveStyle, persona);
+    // If the human baited with a low-card discard earlier this hand, a
+    // wary opponent stops taking early knocks — it holds out for Gin
+    // (or the human beats it there first) instead of walking into the
+    // undercut. The stock-low safety net below still applies, so a hand
+    // never gets sacrificed to a wash just to keep holding out.
+    const wary = state.humanBaitFlag && usesDangerAwareness(persona);
+    if (wary) threshold = 0;
     const stockLow = state.stock.length <= 6;
     const canKnockNow = best.deadwood <= 10 && (best.deadwood <= threshold || stockLow);
 
