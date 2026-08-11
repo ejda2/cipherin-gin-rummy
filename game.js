@@ -302,43 +302,58 @@ function dangerWeights(persona){
   return { rank: 2, run: 1 };
 }
 
-// ---------- public history / "wanted card" model (Expert only) ----------
+// ---------- near-meld hand-building (Expert only) ----------
 //
-// dangerScore above only looks at this hand's discard-pile pickups. This
-// goes further: across the whole match, it remembers every card you've
-// discarded (a card you clearly didn't need) and every discard-pile pickup
-// you kept rather than throwing straight back (a card you clearly did
-// need), and uses both to estimate how much a given unseen card is likely
-// to help you. This never looks at your actual hand, only at information
-// that was already public.
+// Every skill level picks its discard by minimizing this turn's deadwood,
+// one card at a time, with no credit for a pair that's one card from a set
+// or two suited cards that are close to a run. That's fine for a baseline
+// opponent but it means Expert never actually gets better at building a
+// hand, it just gets more patient about knocking (see the floor in
+// knockThreshold below). handPotentialScore gives partial credit for
+// those near-melds among a hand's unmelded cards, and expertDiscardWindow
+// widens the discard candidate pool so Expert can trade a little deadwood
+// this turn for a better shot at completing a meld next turn.
 
-function defaultPublicHistory(){
-  return { playerDiscards: [], playerKeptPickups: [] };
-}
-
-function usesWantedCardModel(persona){
-  return persona.skill === "expert";
-}
-
-function cardWantScore(card, history){
+function handPotentialScore(cards){
   let score = 0;
-  for (const k of history.playerKeptPickups){
-    if (card.r === k.r) score += 3;
-    else if (card.s === k.s && Math.abs(card.r - k.r) <= 2) score += 1.5;
-  }
-  for (const d of history.playerDiscards){
-    if (card.r === d.r) score -= 2;
-    else if (card.s === d.s && Math.abs(card.r - d.r) <= 2) score -= 1;
+  for (let i = 0; i < cards.length; i++){
+    for (let j = i + 1; j < cards.length; j++){
+      const a = cards[i], b = cards[j];
+      if (a.r === b.r){
+        score += 3; // one card away from a set
+      } else if (a.s === b.s && Math.abs(a.r - b.r) <= 2){
+        score += 2; // suited and close enough to plausibly fill a run
+      }
+    }
   }
   return score;
 }
 
-// Called once per hand, right before humanPickupLog is cleared for the
-// next hand. Any pickup still unresolved (never discarded back out) this
-// hand counts as "kept" — folded into the running match-long history.
-function archiveHandPickups(){
-  if (!state.publicHistory) state.publicHistory = defaultPublicHistory();
-  state.publicHistory.playerKeptPickups.push(...state.humanPickupLog);
+// Non-expert opponents only look at discards within 1 point of the best
+// possible deadwood. Expert gets a wider window so a discard that costs a
+// couple of extra deadwood points now, but keeps a near-meld alive, is
+// still on the table.
+function expertDiscardWindow(options){
+  const bestDW = options[0].deadwood;
+  return options.filter(o => o.deadwood <= bestDW + 3);
+}
+
+// Scores each candidate discard by the meld potential it preserves in the
+// resulting hand, minus the deadwood it costs and any danger to the human.
+// Picks the best-scoring candidate rather than just the lowest deadwood.
+function pickBuildingDiscard(candidates, persona, hand){
+  if (candidates.length === 1) return candidates[0];
+  const weights = dangerWeights(persona);
+  const hasDangerData = state.humanPickupLog.length > 0;
+  let bestC = candidates[0], bestScore = -Infinity;
+  for (const c of candidates){
+    const deadwoodCards = c.analysis.deadwoodIdx.map(i => c.remaining[i]);
+    const potential = handPotentialScore(deadwoodCards);
+    const danger = hasDangerData ? dangerScore(hand[c.discardIndex], state.humanPickupLog, weights) : 0;
+    const score = potential - c.deadwood * 0.5 - danger;
+    if (score > bestScore){ bestScore = score; bestC = c; }
+  }
+  return bestC;
 }
 
 // ---------- player profile storage (Firestore) ----------
@@ -371,7 +386,8 @@ function defaultStats(){
     handsStarted: 0, handsFinished: 0,
     totalHandTimeMs: 0, shortestHandMs: null, longestHandMs: null,
     you: defaultSideStats(),
-    opp: defaultSideStats()
+    opp: defaultSideStats(),
+    recentHands: []
   };
 }
 
@@ -381,10 +397,62 @@ function migrateStatsIfNeeded(profile){
   if (!profile.stats || !profile.stats.you || !profile.stats.opp){
     profile.stats = defaultStats();
   }
+  if (!Array.isArray(profile.stats.recentHands)){
+    profile.stats.recentHands = [];
+  }
   if (!profile.tendencies){
     profile.tendencies = defaultTendencies();
   }
   return profile;
+}
+
+// ---------- rolling recent-form window ----------
+//
+// Cumulative stats blend hands from before and after any AI tuning change,
+// which makes it impossible to tell whether a recent change is working.
+// This keeps the most recent RECENT_HANDS_WINDOW finished hands (washes
+// included so the count lines up with what the player experienced, but
+// excluded from the win/loss and deadwood-gap math below) so that can be
+// judged on its own.
+
+const RECENT_HANDS_WINDOW = 30;
+
+function recordRecentHand(entry){
+  if (!state.opponent || !state.opponent.id) return;
+  const stats = state.opponent.stats;
+  if (!Array.isArray(stats.recentHands)) stats.recentHands = [];
+  stats.recentHands.push(entry);
+  if (stats.recentHands.length > RECENT_HANDS_WINDOW){
+    stats.recentHands.shift();
+  }
+}
+
+function computeRecentForm(stats){
+  const all = Array.isArray(stats.recentHands) ? stats.recentHands : [];
+  const hands = all.filter(h => h.type !== "wash");
+  if (!hands.length) return null;
+  const youWins = hands.filter(h => h.winner === "you").length;
+  const oppWins = hands.filter(h => h.winner === "opp").length;
+  const gapSamples = hands.filter(h => h.yourDeadwood !== null && h.oppDeadwood !== null);
+  const avgGap = gapSamples.length
+    ? gapSamples.reduce((s, h) => s + (h.oppDeadwood - h.yourDeadwood), 0) / gapSamples.length
+    : null;
+  return { count: hands.length, windowSize: all.length, youWins, oppWins, avgGap };
+}
+
+// Short sentence appended after describeTendencies() in the Stats modal.
+// Needs at least 5 non-wash hands in the window before it says anything,
+// since a 2-hand sample isn't worth reporting.
+function describeRecentForm(profile){
+  const form = computeRecentForm(profile.stats);
+  if (!form || form.count < 5) return "";
+  let gapText = "";
+  if (form.avgGap !== null){
+    gapText = form.avgGap >= 0
+      ? `you're averaging a ${form.avgGap.toFixed(1)}-deadwood edge`
+      : `${profile.name} is averaging a ${Math.abs(form.avgGap).toFixed(1)}-deadwood edge`;
+  }
+  return `Recent form (last ${form.count} hands): you've won ${form.youWins}, ${profile.name} has won ${form.oppWins}${gapText ? ", and " + gapText : ""}.`;
 }
 
 // ---------- adaptive opponent: learned tendencies ----------
@@ -535,8 +603,6 @@ const state = {
   currentUid: null,
   opponent: DEFAULT_OPPONENT,
   humanPickupLog: [],
-  publicHistory: null,
-  humanBaitFlag: false,
   handStartTime: null,
   roundHistory: [],
   playerJustDrawnFromDiscardId: null,
@@ -935,7 +1001,6 @@ function newMatch(){
   state.round = 1;
   state.dealerIsPlayer = true;
   state.roundHistory = [];
-  state.publicHistory = defaultPublicHistory();
   el.matchModal.classList.add("hidden");
   clearLog();
   startRound();
@@ -948,8 +1013,6 @@ function startRound(){
   state.selectedIndex = null;
   state.locked = false;
   state.humanPickupLog = [];
-  if (!state.publicHistory) state.publicHistory = defaultPublicHistory();
-  state.humanBaitFlag = false;
   state.humanHandStats = { draws: 0, stockDraws: 0, discards: 0, highCardDiscards: 0 };
   state.handStartTime = Date.now();
   state.playerJustDrawnFromDiscardId = null;
@@ -1053,22 +1116,6 @@ function performDiscard(i, asKnock){
   state.selectedIndex = null;
   state.humanHandStats.discards += 1;
   if (cardPoints(card.r) >= 10) state.humanHandStats.highCardDiscards += 1;
-  if (!state.publicHistory) state.publicHistory = defaultPublicHistory();
-  state.publicHistory.playerDiscards.push(card);
-  // A card thrown right back out was never really "kept" — drop it from
-  // this hand's pickup log so it doesn't get archived as a wanted card.
-  state.humanPickupLog = state.humanPickupLog.filter(c => c.id !== card.id);
-  // Discarding an Ace or a 2 early is a classic knock-bait: it makes your
-  // hand look thin so the opponent knocks early, only to get undercut by
-  // a stronger hand than expected. Opponents that pay attention to your
-  // hand at all (trapper style, or Advanced/Expert skill) pick up on this
-  // and stop offering easy knocks for the rest of the hand.
-  if ((card.r === 1 || card.r === 2) && !state.humanBaitFlag){
-    state.humanBaitFlag = true;
-    if (state.opponent && state.opponent.id && usesDangerAwareness(state.opponent)){
-      log(`${oppName()} notices you letting go of a low card and will play cagey, holding out for Gin this hand.`, "comp");
-    }
-  }
   log(`You discarded ${cardLabel(card)}.`, "you");
 
   if (a.deadwoodPoints === 0){
@@ -1182,6 +1229,15 @@ function personaEffectiveStyle(persona){
   return persona.style;
 }
 
+// A minimum knock threshold for Expert once tendencies start nudging it
+// down. Without a floor, an opponent facing a human who knocks early with
+// low deadwood gets nudged toward pure patience — but patience alone
+// doesn't make its hand-building any better, so it just ends up sitting
+// on high deadwood, rarely reaching a knockable hand at all (see the
+// recent-form numbers on Victor Vault). The floor keeps it willing to
+// take a knock instead of only ever chasing Gin.
+const KNOCK_THRESHOLD_FLOOR = 3;
+
 // persona is optional so callers that don't have adaptive data (or don't
 // need it) can keep calling this with just a style string.
 function knockThreshold(style, persona){
@@ -1195,85 +1251,38 @@ function knockThreshold(style, persona){
     // aggressive against someone who knocks early with deadwood still on
     // the table, more patient against someone who holds out for Gin.
     const nudged = (base + persona.tendencies.avgKnockDeadwood) / 2;
-    base = Math.max(0, Math.min(10, Math.round(nudged)));
+
+    let floor = 0;
+    if (persona.skill === "expert"){
+      floor = KNOCK_THRESHOLD_FLOOR;
+      // If this opponent is rarely the one ending the hand (knock or
+      // gin) in the first place, it needs more room to knock, not less —
+      // raise the floor further so the nudge can't push it deeper into
+      // a patience it hasn't earned with better hand-building.
+      const opp = persona.stats && persona.stats.opp;
+      const handsSeen = opp ? opp.handsWon + opp.handsLost : 0;
+      if (opp && handsSeen >= 10){
+        const enderRate = (opp.knockCount + opp.ginCount) / handsSeen;
+        if (enderRate < 0.3) floor = 5;
+      }
+    }
+
+    base = Math.max(floor, Math.min(10, Math.round(nudged)));
   }
   return base;
 }
 
-// ---------- meld-potential scoring (Expert hand-building) ----------
-//
-// bestDiscardOptions only ever measures deadwood *right now*. It has no
-// sense of which leftover cards are close to becoming a meld versus truly
-// dead. Two hands can have identical current deadwood while one is stuffed
-// with near-pairs and suited neighbors (one lucky draw from a meld) and
-// the other is just scattered junk — this is the difference between a
-// hand that's "building" and one that's stalled, and it's the main reason
-// the AI's average deadwood has been running well above a decent human's.
-// Expert opponents use this to prefer the near-melded hand whenever
-// current deadwood is close enough not to matter on its own.
-
-function handPotentialScore(cards){
-  let score = 0;
-  for (let i = 0; i < cards.length; i++){
-    for (let j = i + 1; j < cards.length; j++){
-      const a = cards[i], b = cards[j];
-      if (a.r === b.r) score += 2;                                   // pair — one card from a set
-      else if (a.s === b.s && Math.abs(a.r - b.r) <= 2) score += 1.5; // suited & close — building a run
-    }
-  }
-  return score;
-}
-
-// How far Expert is willing to sacrifice immediate deadwood to keep
-// building potential, scaled to how much of the stock is left. Early in
-// a hand there's time to gamble on a near-meld; late in a hand (or once
-// the stock is running low) that gamble stops being worth it and Expert
-// should fall back to minimizing deadwood outright, same as any other
-// opponent would need to.
-function expertDiscardWindow(){
-  const stockLeft = state.stock.length;
-  if (stockLeft > 20) return 3;
-  if (stockLeft > 10) return 2;
-  return 0;
-}
-
-function pickWithDangerAwareness(candidates, persona, hand, isBuilding){
+function pickWithDangerAwareness(candidates, persona, hand){
   if (candidates.length === 1) return candidates[0];
-  const wantedActive = usesWantedCardModel(persona) && state.publicHistory &&
-    (state.publicHistory.playerDiscards.length || state.publicHistory.playerKeptPickups.length);
-  const buildingExpert = isBuilding && persona.skill === "expert";
-
-  if (usesDangerAwareness(persona) && (state.humanPickupLog.length || wantedActive || buildingExpert)){
+  if (usesDangerAwareness(persona) && state.humanPickupLog.length){
     const weights = dangerWeights(persona);
     let bestC = candidates[0], bestScore = Infinity;
     for (const c of candidates){
-      const card = hand[c.discardIndex];
-      let score = dangerScore(card, state.humanPickupLog, weights);
-      // Expert opponents also weigh the match-long "wanted card" model —
-      // cards you've kept from pickups (need signal) and cards you've
-      // discarded (don't-need signal) — on top of this hand's pickups.
-      if (wantedActive) score += cardWantScore(card, state.publicHistory);
-      // And, while still building (not yet knocking), reward whichever
-      // discard leaves the most meld potential behind in the remaining hand.
-      if (buildingExpert){
-        const potential = handPotentialScore(c.analysis.deadwoodIdx.map(i => c.remaining[i]));
-        score -= potential * 0.8;
-      }
+      const score = dangerScore(hand[c.discardIndex], state.humanPickupLog, weights);
       if (score < bestScore){ bestScore = score; bestC = c; }
     }
     return bestC;
   }
-
-  if (buildingExpert){
-    let bestC = candidates[0], bestScore = Infinity;
-    for (const c of candidates){
-      const potential = handPotentialScore(c.analysis.deadwoodIdx.map(i => c.remaining[i]));
-      const score = -potential * 0.8 - cardPoints(hand[c.discardIndex].r) * 0.1;
-      if (score < bestScore){ bestScore = score; bestC = c; }
-    }
-    return bestC;
-  }
-
   let bestC = candidates[0], bestPoints = -1;
   for (const c of candidates){
     const pts = cardPoints(hand[c.discardIndex].r);
@@ -1296,32 +1305,6 @@ function computerChooseDraw(persona){
     const danger = dangerScore(topDiscard, state.humanPickupLog, dangerWeights(persona));
     if (danger >= 2 && bestWithDiscard <= currentAnalysis.deadwoodPoints + 2) return "discard";
   }
-
-  // Expert opponents will also snatch a discard purely to deny you a card
-  // your match-long history marks as clearly wanted, as long as it
-  // doesn't cost them too much deadwood to do it.
-  if (usesWantedCardModel(persona) && state.publicHistory){
-    const want = cardWantScore(topDiscard, state.publicHistory);
-    if (want >= 3 && bestWithDiscard <= currentAnalysis.deadwoodPoints + 3) return "discard";
-  }
-
-  // Expert opponents will also grab a discard purely to build — turning a
-  // scattered hand into one full of near-melds — even when it doesn't
-  // lower deadwood at all, as long as the cost stays within this stage of
-  // the hand's tolerance window. This is the single biggest lever for
-  // closing the deadwood gap: a strong human player keeps cards like this
-  // on purpose, and up to now the AI never did.
-  if (persona.skill === "expert"){
-    const currentDeadwoodCards = currentAnalysis.deadwoodIdx.map(i => state.computerHand[i]);
-    const currentPotential = handPotentialScore(currentDeadwoodCards);
-    const afterDeadwoodCards = options[0].analysis.deadwoodIdx.map(i => options[0].remaining[i]);
-    const afterPotential = handPotentialScore(afterDeadwoodCards);
-    const window = expertDiscardWindow();
-    if (afterPotential > currentPotential + 2 && bestWithDiscard <= currentAnalysis.deadwoodPoints + window){
-      return "discard";
-    }
-  }
-
   return "stock";
 }
 
@@ -1362,20 +1345,13 @@ function computerTurn(){
     }
 
     const effectiveStyle = personaEffectiveStyle(persona);
-    let threshold = knockThreshold(effectiveStyle, persona);
-    // If the human baited with a low-card discard earlier this hand, a
-    // wary opponent stops taking early knocks — it holds out for Gin
-    // (or the human beats it there first) instead of walking into the
-    // undercut. The stock-low safety net below still applies, so a hand
-    // never gets sacrificed to a wash just to keep holding out.
-    const wary = state.humanBaitFlag && usesDangerAwareness(persona);
-    if (wary) threshold = 0;
+    const threshold = knockThreshold(effectiveStyle, persona);
     const stockLow = state.stock.length <= 6;
     const canKnockNow = best.deadwood <= 10 && (best.deadwood <= threshold || stockLow);
 
     if (canKnockNow){
       const knockCandidates = options.filter(o => o.deadwood === best.deadwood);
-      const chosen = pickWithDangerAwareness(knockCandidates, persona, hand, false);
+      const chosen = pickWithDangerAwareness(knockCandidates, persona, hand);
       const card = hand[chosen.discardIndex];
       state.computerHand = chosen.remaining;
       state.discard.push(card);
@@ -1385,9 +1361,13 @@ function computerTurn(){
       return;
     }
 
-    const nearBestWindow = persona.skill === "expert" ? expertDiscardWindow() : 1;
-    const nearBest = options.filter(o => o.deadwood <= best.deadwood + Math.max(1, nearBestWindow));
-    const chosen = pickWithDangerAwareness(nearBest, persona, hand, true);
+    // Expert gets a wider discard window and picks by near-meld potential
+    // rather than pure deadwood, so it actually builds toward a knockable
+    // hand instead of just discarding whatever is cheapest this turn.
+    // Everyone else keeps the original narrow, deadwood-only window.
+    const chosen = persona.skill === "expert"
+      ? pickBuildingDiscard(expertDiscardWindow(options), persona, hand)
+      : pickWithDangerAwareness(options.filter(o => o.deadwood <= best.deadwood + 1), persona, hand);
     const card = hand[chosen.discardIndex];
     state.computerHand = chosen.remaining;
     state.discard.push(card);
@@ -1453,6 +1433,8 @@ function recordHandOutcome({ winnerSide, loserSide, pts, yourDeadwoodFinal, oppD
   loser.curLoseStreak += 1;
   loser.longestLoseStreak = Math.max(loser.longestLoseStreak, loser.curLoseStreak);
   loser.curWinStreak = 0;
+
+  recordRecentHand({ type: result, winner: winnerSide, yourDeadwood: yourDeadwoodFinal, oppDeadwood: oppDeadwoodFinal });
 
   saveProfiles(state.profiles);
 }
@@ -1527,9 +1509,12 @@ function endRound({ type, knocker }){
   state.phase = null;
   recordHandTiming();
   recordTendencies(type, knocker);
-  archiveHandPickups();
 
   if (type === "wash"){
+    if (state.opponent && state.opponent.id){
+      recordRecentHand({ type: "wash", winner: null, yourDeadwood: null, oppDeadwood: null });
+      saveProfiles(state.profiles);
+    }
     state.roundHistory.push({ round: state.round, playerScore: 0, playerBonus: 0, computerScore: 0, computerBonus: 0, result: "Wash" });
     el.roundTitle.textContent = "Stock Exhausted";
     el.roundBody.innerHTML = `<p>Neither player knocked before the stock ran low. This hand is a wash — no points scored.</p>`;
@@ -1938,7 +1923,8 @@ function openStatsModal(profile){
 
   el.statsTitle.textContent = `Statistics vs ${profile.name}`;
   el.statsOppName.textContent = profile.name;
-  el.statsTendenciesNote.textContent = describeTendencies(profile);
+  const recentFormNote = describeRecentForm(profile);
+  el.statsTendenciesNote.textContent = describeTendencies(profile) + (recentFormNote ? " " + recentFormNote : "");
 
   el.statsMetaTable.innerHTML = `
     <tr><td>Statistics collected since</td><td class="num">${formatDate(stats.since)}</td></tr>
