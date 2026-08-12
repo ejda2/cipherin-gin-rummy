@@ -11,6 +11,7 @@ const RANK_LABEL = ["", "A","2","3","4","5","6","7","8","9","10","J","Q","K"];
 const TARGET_SCORE = 100;
 const GIN_BONUS = 25;
 const UNDERCUT_BONUS = 25;
+const LOW_CARD_MAX_RANK = 2; // Ace and 2 count as "cheap deadwood filler" for the gin-holdout read
 
 const STYLE_META = {
   aggressive: { label: "Aggressive Knocker", blurb: "Knocks the moment deadwood hits 10 or less, keeping low cards to get there fast." },
@@ -255,6 +256,29 @@ function findMeldContaining(meldMasks, bitIdx){
   return null;
 }
 
+// ---------- knock safety (Expert only) ----------
+//
+// An undercut happens when the defender's deadwood, after laying off
+// cards onto the knocker's own melds, ends up at or below the knocker's.
+// That risk lives entirely in the shape of the knocker's own melds — a
+// run left open at one end, or a set of three sitting one card short of
+// four, both invite a layoff — so it can be judged without knowing
+// anything about the opponent's actual hand. A set of 4 or a run that's
+// boxed in on both ends (e.g. touching A or K) has zero exposure.
+function meldLayoffExposure(hand, meldMasks){
+  let exposure = 0;
+  for (const m of meldMasks){
+    const shape = meldShape(hand, m);
+    if (shape.type === "set"){
+      exposure += Math.max(0, 4 - shape.cards.length);
+    } else {
+      if (shape.min > 1) exposure += 1;
+      if (shape.max < 13) exposure += 1;
+    }
+  }
+  return exposure;
+}
+
 function meldDescription(hand, meldMask){
   const idxs = [];
   for (let i = 0; i < hand.length; i++) if (meldMask & (1 << i)) idxs.push(i);
@@ -403,6 +427,9 @@ function migrateStatsIfNeeded(profile){
   if (!profile.tendencies){
     profile.tendencies = defaultTendencies();
   }
+  if (!("lowCardPassRate" in profile.tendencies)){
+    profile.tendencies.lowCardPassRate = null;
+  }
   return profile;
 }
 
@@ -457,7 +484,7 @@ function describeRecentForm(profile){
 
 // ---------- adaptive opponent: learned tendencies ----------
 //
-// Five signals, each an exponential moving average so recent hands count
+// Six signals, each an exponential moving average so recent hands count
 // more than old ones without any single odd hand swinging things wildly.
 // Updated once per finished hand (win, lose, or wash) via recordTendencies().
 // Only Advanced/Expert opponents act on this, and only once at least 3
@@ -474,7 +501,8 @@ function defaultTendencies(){
     stockPickupRate: null,
     avgKnockDeadwood: null,
     avgKnockTurn: null,
-    runPreference: null
+    runPreference: null,
+    lowCardPassRate: null
   };
 }
 
@@ -504,6 +532,9 @@ function recordTendencies(type, knocker){
   }
   if (hd.draws > 0){
     sample.stockPickupRate = hd.stockDraws / hd.draws;
+  }
+  if (hd.lowCardPassOpportunities > 0){
+    sample.lowCardPassRate = hd.lowCardPasses / hd.lowCardPassOpportunities;
   }
   if (type !== "wash" && knocker === "player"){
     const finalAnalysis = analyzeHand(state.playerHand);
@@ -543,6 +574,9 @@ function describeTendencies(profile){
   if (t.runPreference !== null){
     if (t.runPreference >= 0.6) bits.push("favor runs over sets");
     else if (t.runPreference <= 0.4) bits.push("favor sets over runs");
+  }
+  if (t.lowCardPassRate !== null && t.lowCardPassRate >= 0.6){
+    bits.push("leave Aces and 2s on the discard pile when you don't need them, a sign you're holding out for Gin");
   }
   const summary = bits.length ? bits.join(", ") : "haven't shown a clear pattern yet";
   return `Based on ${tracked} hands, you ${summary}. ${profile.name} adjusts its own knock timing and discards to that.`;
@@ -1013,7 +1047,7 @@ function startRound(){
   state.selectedIndex = null;
   state.locked = false;
   state.humanPickupLog = [];
-  state.humanHandStats = { draws: 0, stockDraws: 0, discards: 0, highCardDiscards: 0 };
+  state.humanHandStats = { draws: 0, stockDraws: 0, discards: 0, highCardDiscards: 0, lowCardPassOpportunities: 0, lowCardPasses: 0 };
   state.handStartTime = Date.now();
   state.playerJustDrawnFromDiscardId = null;
   state.computerJustDrawnFromDiscardId = null;
@@ -1152,6 +1186,15 @@ el.knockBtn.addEventListener("click", () => {
 el.stockPile.addEventListener("click", () => {
   const isPlayerDraw = state.turn === "player" && state.phase === "draw" && !state.locked;
   if (!isPlayerDraw || state.stock.length <= 2) return;
+  // A low card (Ace/2) sitting on top of the discard pile is cheap,
+  // safe deadwood filler. Drawing from the stock instead means passing
+  // it up — tracked as a signal that the hand doesn't need filler
+  // because it's already tight and headed for Gin. See LOW_CARD_MAX_RANK.
+  const topDiscard = state.discard[state.discard.length - 1];
+  if (topDiscard && topDiscard.r <= LOW_CARD_MAX_RANK){
+    state.humanHandStats.lowCardPassOpportunities += 1;
+    state.humanHandStats.lowCardPasses += 1;
+  }
   const card = state.stock.pop();
   state.playerHand.push(card);
   state.phase = "discard";
@@ -1165,6 +1208,10 @@ el.stockPile.addEventListener("click", () => {
 el.discardPile.addEventListener("click", () => {
   const isPlayerDraw = state.turn === "player" && state.phase === "draw" && !state.locked;
   if (!isPlayerDraw || state.discard.length === 0) return;
+  const topDiscard = state.discard[state.discard.length - 1];
+  if (topDiscard && topDiscard.r <= LOW_CARD_MAX_RANK){
+    state.humanHandStats.lowCardPassOpportunities += 1;
+  }
   const card = state.discard.pop();
   state.playerHand.push(card);
   state.humanPickupLog.push(card);
@@ -1238,6 +1285,11 @@ function personaEffectiveStyle(persona){
 // take a knock instead of only ever chasing Gin.
 const KNOCK_THRESHOLD_FLOOR = 3;
 
+// Passing this often on a cheap Ace/2 discard (drawing stock instead)
+// means the human doesn't need deadwood filler — the hand's already tight
+// and they're holding out for their own Gin.
+const LOW_CARD_PASS_HOLDOUT_THRESHOLD = 0.6;
+
 // persona is optional so callers that don't have adaptive data (or don't
 // need it) can keep calling this with just a style string.
 function knockThreshold(style, persona){
@@ -1246,11 +1298,23 @@ function knockThreshold(style, persona){
   else if (style === "trapper") base = 7;
   else base = 10;
 
-  if (persona && usesLearnedTendencies(persona) && persona.tendencies.avgKnockDeadwood !== null){
+  if (!(persona && usesLearnedTendencies(persona))) return base;
+  const t = persona.tendencies;
+
+  // A well-evidenced read that the human is sitting on a near-Gin hand.
+  // Match that outright — hold out for Gin too — rather than knocking
+  // into a hand that's about to go to zero anyway. This is a deliberate
+  // response to observed behavior, not the kind of nudge over-correction
+  // the floor below exists to guard against, so it skips the floor.
+  if (t.lowCardPassRate !== null && t.lowCardPassRate >= LOW_CARD_PASS_HOLDOUT_THRESHOLD){
+    return 0;
+  }
+
+  if (t.avgKnockDeadwood !== null){
     // Nudge halfway toward matching the human's own knock pace — more
     // aggressive against someone who knocks early with deadwood still on
     // the table, more patient against someone who holds out for Gin.
-    const nudged = (base + persona.tendencies.avgKnockDeadwood) / 2;
+    const nudged = (base + t.avgKnockDeadwood) / 2;
 
     let floor = 0;
     if (persona.skill === "expert"){
@@ -1347,15 +1411,30 @@ function computerTurn(){
     const effectiveStyle = personaEffectiveStyle(persona);
     const threshold = knockThreshold(effectiveStyle, persona);
     const stockLow = state.stock.length <= 6;
-    const canKnockNow = best.deadwood <= 10 && (best.deadwood <= threshold || stockLow);
+    let canKnockNow = best.deadwood <= 10 && (best.deadwood <= threshold || stockLow);
 
+    let knockChosen = null;
     if (canKnockNow){
       const knockCandidates = options.filter(o => o.deadwood === best.deadwood);
-      const chosen = pickWithDangerAwareness(knockCandidates, persona, hand);
-      const card = hand[chosen.discardIndex];
-      state.computerHand = chosen.remaining;
+      knockChosen = pickWithDangerAwareness(knockCandidates, persona, hand);
+
+      // Expert only: a knock with exposed melds and deadwood that isn't
+      // already very low risks handing over an undercut for not much
+      // savings. Hold back and keep building instead, unless the stock
+      // is about to force a wash anyway.
+      if (persona.skill === "expert" && !stockLow){
+        const exposure = meldLayoffExposure(knockChosen.remaining, knockChosen.analysis.meldMasks);
+        if (exposure >= 2 && knockChosen.deadwood > KNOCK_THRESHOLD_FLOOR){
+          canKnockNow = false;
+        }
+      }
+    }
+
+    if (canKnockNow){
+      const card = hand[knockChosen.discardIndex];
+      state.computerHand = knockChosen.remaining;
       state.discard.push(card);
-      log(`${oppName()} discards ${cardLabel(card)} and knocks with ${chosen.deadwood} deadwood.`, "comp important");
+      log(`${oppName()} discards ${cardLabel(card)} and knocks with ${knockChosen.deadwood} deadwood.`, "comp important");
       renderAll();
       endRound({ type: "knock", knocker: "computer" });
       return;
