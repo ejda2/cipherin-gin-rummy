@@ -24,6 +24,21 @@ const STYLE_META = {
 // dealt to each player and the 1 turned face-up to start the discard
 // pile. Used by the Calculated style to gauge how far into a hand it is.
 const STARTING_STOCK = 31;
+
+// Recorded stats show the human typically knocks well before the stock
+// gets anywhere near low (60-77% self-knock rates, hands finishing in
+// well under a minute), so a threshold or discard strategy that only
+// loosens up as the stock empties rarely gets the chance to loosen up at
+// all — the hand's over first. HAND_URGENCY_TURNS instead measures time
+// pressure against a clock the AI actually experiences every hand: its
+// own turn count. handUrgency() returns 0 on the AI's first turn, rising
+// to 1 by its HAND_URGENCY_TURNS-th turn, regardless of style or how
+// much stock happens to be left.
+const HAND_URGENCY_TURNS = 6;
+
+function handUrgency(){
+  return Math.min(1, state.computerTurnsThisHand / HAND_URGENCY_TURNS);
+}
 const SKILL_META = {
   intermediate: { label: "Intermediate", blurb: "Manages its own deadwood but doesn't track your hand." },
   advanced:     { label: "Advanced",     blurb: "Remembers what you've picked up and plays around it." },
@@ -362,25 +377,37 @@ function handPotentialScore(cards){
 // Non-expert opponents only look at discards within 1 point of the best
 // possible deadwood. Expert gets a wider window so a discard that costs a
 // couple of extra deadwood points now, but keeps a near-meld alive, is
-// still on the table.
+// still on the table. That window narrows back down as handUrgency()
+// rises — chasing a meld is worth a few extra deadwood points on turn 1,
+// much less so on turn 6 when the hand needs to be knockable soon.
 function expertDiscardWindow(options){
   const bestDW = options[0].deadwood;
-  return options.filter(o => o.deadwood <= bestDW + 3);
+  const span = 3 - Math.round(handUrgency() * 2); // 3 early, down to 1 once urgency maxes
+  return options.filter(o => o.deadwood <= bestDW + span);
 }
 
 // Scores each candidate discard by the meld potential it preserves in the
 // resulting hand, minus the deadwood it costs and any danger to the human.
 // Picks the best-scoring candidate rather than just the lowest deadwood.
+// Both weights shift with handUrgency(): early on, meld potential counts
+// close to full value and deadwood is a mild deterrent; by the urgency
+// ceiling, potential counts for much less and deadwood cost counts for
+// more, so discard choice converges toward "get the number down now"
+// instead of continuing to gamble on a meld the human won't wait around
+// for.
 function pickBuildingDiscard(candidates, persona, hand){
   if (candidates.length === 1) return candidates[0];
   const weights = dangerWeights(persona);
   const hasDangerData = state.humanPickupLog.length > 0;
+  const urgency = handUrgency();
+  const deadwoodWeight = 0.5 + urgency * 0.5;
+  const potentialWeight = 1 - urgency * 0.4;
   let bestC = candidates[0], bestScore = -Infinity;
   for (const c of candidates){
     const deadwoodCards = c.analysis.deadwoodIdx.map(i => c.remaining[i]);
-    const potential = handPotentialScore(deadwoodCards);
+    const potential = handPotentialScore(deadwoodCards) * potentialWeight;
     const danger = hasDangerData ? dangerScore(hand[c.discardIndex], state.humanPickupLog, weights) : 0;
-    const score = potential - c.deadwood * 0.5 - danger;
+    const score = potential - c.deadwood * deadwoodWeight - danger;
     if (score > bestScore){ bestScore = score; bestC = c; }
   }
   return bestC;
@@ -647,6 +674,7 @@ const state = {
   roundHistory: [],
   playerJustDrawnFromDiscardId: null,
   computerJustDrawnFromDiscardId: null,
+  computerTurnsThisHand: 0,
 };
 
 let editingProfileId = null;
@@ -1057,6 +1085,7 @@ function startRound(){
   state.handStartTime = Date.now();
   state.playerJustDrawnFromDiscardId = null;
   state.computerJustDrawnFromDiscardId = null;
+  state.computerTurnsThisHand = 0;
 
   if (state.opponent && state.opponent.id){
     state.opponent.stats.handsStarted += 1;
@@ -1312,6 +1341,13 @@ function knockThreshold(style, persona){
   }
   else base = 10;
 
+  // Every Expert style leans steadily less choosy as its own turns tick
+  // by, on top of whatever its style already does. See HAND_URGENCY_TURNS
+  // above for why this is anchored to turns instead of stock size.
+  if (persona && persona.skill === "expert"){
+    base = Math.round(base + (10 - base) * handUrgency() * 0.6);
+  }
+
   if (!(persona && usesLearnedTendencies(persona))) return base;
   const t = persona.tendencies;
 
@@ -1388,6 +1424,7 @@ function computerChooseDraw(persona){
 
 function computerTurn(){
   const persona = state.opponent;
+  state.computerTurnsThisHand += 1;
   const draw = computerChooseDraw(persona);
   let drawnCard;
   if (draw === "discard" && state.discard.length > 0){
