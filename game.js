@@ -14,10 +14,16 @@ const UNDERCUT_BONUS = 25;
 const LOW_CARD_MAX_RANK = 2; // Ace and 2 count as "cheap deadwood filler" for the gin-holdout read
 
 const STYLE_META = {
-  aggressive: { label: "Aggressive Knocker", blurb: "Knocks the moment deadwood hits 10 or less, keeping low cards to get there fast." },
-  patient:    { label: "Patient Gin Seeker", blurb: "Holds out for a full Gin whenever it can, only knocking early if forced." },
-  trapper:    { label: "Defensive Trapper",  blurb: "Tracks what you pick up and avoids discarding cards that could help you." }
+  aggressive: { label: "Aggressive Knocker",   blurb: "Knocks the moment deadwood hits 10 or less, keeping low cards to get there fast." },
+  patient:    { label: "Patient Gin Seeker",   blurb: "Holds out for a full Gin whenever it can, only knocking early if forced." },
+  trapper:    { label: "Defensive Trapper",    blurb: "Tracks what you pick up and avoids discarding cards that could help you." },
+  calculated: { label: "Calculated Strategist", blurb: "Patient while the stock is full, watchful of what you pick up throughout, and increasingly willing to knock as the stock runs low." }
 };
+
+// How many cards start in the stock pile: a 52-card deck minus the 10
+// dealt to each player and the 1 turned face-up to start the discard
+// pile. Used by the Calculated style to gauge how far into a hand it is.
+const STARTING_STOCK = 31;
 const SKILL_META = {
   intermediate: { label: "Intermediate", blurb: "Manages its own deadwood but doesn't track your hand." },
   advanced:     { label: "Advanced",     blurb: "Remembers what you've picked up and plays around it." },
@@ -310,7 +316,7 @@ function dangerScore(card, pickupLog, weights){
 }
 
 function usesDangerAwareness(persona){
-  return persona.style === "trapper" || persona.skill === "advanced" || persona.skill === "expert";
+  return persona.style === "trapper" || persona.style === "calculated" || persona.skill === "advanced" || persona.skill === "expert";
 }
 
 // Once an Advanced/Expert opponent has learned a human's run-vs-set
@@ -1296,6 +1302,14 @@ function knockThreshold(style, persona){
   let base;
   if (style === "patient") base = 0;
   else if (style === "trapper") base = 7;
+  else if (style === "calculated"){
+    // Slide from Patient-like (0) toward Aggressive-like (10) as the
+    // stock empties out, rather than sitting at one fixed number all
+    // hand. Early on there's still time to hold out for Gin; once the
+    // stock is thinning, a knockable hand now beats risking a wash.
+    const consumed = 1 - (state.stock.length / STARTING_STOCK);
+    base = Math.round(10 * Math.max(0, Math.min(1, consumed)));
+  }
   else base = 10;
 
   if (!(persona && usesLearnedTendencies(persona))) return base;
@@ -1365,7 +1379,7 @@ function computerChooseDraw(persona){
 
   if (bestWithDiscard < currentAnalysis.deadwoodPoints || bestWithDiscard <= 10) return "discard";
 
-  if (persona.style === "trapper" && state.humanPickupLog.length){
+  if ((persona.style === "trapper" || persona.style === "calculated") && state.humanPickupLog.length){
     const danger = dangerScore(topDiscard, state.humanPickupLog, dangerWeights(persona));
     if (danger >= 2 && bestWithDiscard <= currentAnalysis.deadwoodPoints + 2) return "discard";
   }
