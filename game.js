@@ -15,13 +15,31 @@ const UNDERCUT_BONUS = 25;
 const STYLE_META = {
   aggressive: { label: "Aggressive Knocker", blurb: "Knocks the moment deadwood hits 10 or less, keeping low cards to get there fast." },
   patient:    { label: "Patient Gin Seeker", blurb: "Holds out for a full Gin whenever it can, only knocking early if forced." },
-  trapper:    { label: "Defensive Trapper",  blurb: "Tracks what you pick up and avoids discarding cards that could help you." }
+  trapper:    { label: "Defensive Trapper",  blurb: "Tracks what you pick up and avoids discarding cards that could help you." },
+  calculated: { label: "Calculated Strategist", blurb: "Blends aggressive, patient, and trapper instincts, weighing each hand on its own merits rather than sticking to one script." }
 };
 const SKILL_META = {
   intermediate: { label: "Intermediate", blurb: "Manages its own deadwood but doesn't track your hand." },
   advanced:     { label: "Advanced",     blurb: "Remembers what you've picked up and plays around it." },
   expert:       { label: "Expert",       blurb: "Adapts its style to the score as the match develops." }
 };
+
+// Saved profiles can carry a style/skill value from before this file's
+// current STYLE_META/SKILL_META, or (in principle) bad data from
+// somewhere else entirely. A missing key here used to throw and freeze
+// the whole app before a single card was even dealt — this keeps a
+// stale or unrecognized value from ever taking the game down, and logs
+// it so a real mismatch is easy to spot and fix.
+function styleMeta(key){
+  if (STYLE_META[key]) return STYLE_META[key];
+  console.warn(`Unrecognized player style "${key}" — falling back to a generic label.`);
+  return { label: key || "Custom style", blurb: "" };
+}
+function skillMeta(key){
+  if (SKILL_META[key]) return SKILL_META[key];
+  console.warn(`Unrecognized player skill "${key}" — falling back to a generic label.`);
+  return { label: key || "Custom skill", blurb: "" };
+}
 
 // ---------- basic card helpers ----------
 
@@ -316,7 +334,7 @@ function dangerScore(card, pickupLog, weights){
 }
 
 function usesDangerAwareness(persona){
-  return persona.style === "trapper" || persona.skill === "advanced" || persona.skill === "expert";
+  return persona.style === "trapper" || persona.style === "calculated" || persona.skill === "advanced" || persona.skill === "expert";
 }
 
 // Once an Advanced/Expert opponent has learned a human's run-vs-set
@@ -862,7 +880,7 @@ function updateDeadwoodReadout(){
 function updateOpponentLine(){
   let text = `vs ${oppName()}`;
   if (state.opponent && state.opponent.id){
-    text += ` · ${STYLE_META[state.opponent.style].label} · ${SKILL_META[state.opponent.skill].label}`;
+    text += ` · ${styleMeta(state.opponent.style).label} · ${skillMeta(state.opponent.skill).label}`;
   }
   el.opponentLine.textContent = text;
   el.computerNameLabel.textContent = oppName();
@@ -1172,6 +1190,7 @@ function knockThreshold(style, persona, urgency){
   let base;
   if (style === "patient") base = 0;
   else if (style === "trapper") base = 7;
+  else if (style === "calculated") base = 6; // blend of aggressive/patient/trapper, weighed per hand
   else base = 10;
 
   if (persona && usesLearnedTendencies(persona) && persona.tendencies.avgKnockDeadwood !== null){
@@ -1231,7 +1250,7 @@ function computerChooseDraw(persona){
 
   if (bestWithDiscard < currentAnalysis.deadwoodPoints || bestWithDiscard <= 10) return "discard";
 
-  if (persona.style === "trapper" && state.humanPickupLog.length){
+  if ((persona.style === "trapper" || persona.style === "calculated") && state.humanPickupLog.length){
     const danger = dangerScore(topDiscard, state.humanPickupLog, dangerWeights(persona));
     if (danger >= 2 && bestWithDiscard <= currentAnalysis.deadwoodPoints + 2) return "discard";
   }
@@ -1683,7 +1702,7 @@ function renderPlayersList(){
     row.innerHTML = `
       <div class="player-row-main">
         <div class="player-row-name">${escapeHtml(profile.name)}</div>
-        <div class="player-row-meta">${profile.gender ? escapeHtml(profile.gender) + " · " : ""}${STYLE_META[profile.style].label} · ${SKILL_META[profile.skill].label}</div>
+        <div class="player-row-meta">${profile.gender ? escapeHtml(profile.gender) + " · " : ""}${styleMeta(profile.style).label} · ${skillMeta(profile.skill).label}</div>
         <div class="player-row-record">Your record vs them: ${record} &middot; ${profile.stats.handsFinished} hands played</div>
       </div>
       <div class="player-row-actions">
@@ -1701,8 +1720,8 @@ function renderPlayersList(){
 }
 
 function updateBlurbs(){
-  el.pfStyleBlurb.textContent = STYLE_META[el.pfStyle.value].blurb;
-  el.pfSkillBlurb.textContent = SKILL_META[el.pfSkill.value].blurb;
+  el.pfStyleBlurb.textContent = styleMeta(el.pfStyle.value).blurb;
+  el.pfSkillBlurb.textContent = skillMeta(el.pfSkill.value).blurb;
 }
 el.pfStyle.addEventListener("change", updateBlurbs);
 el.pfSkill.addEventListener("change", updateBlurbs);
