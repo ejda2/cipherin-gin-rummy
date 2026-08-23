@@ -1156,6 +1156,21 @@ function knockThreshold(style, persona){
   return base;
 }
 
+// Against an opponent who reliably holds out for a near-zero-deadwood
+// knock (Gin, or a razor-thin undercut-proof knock), taking the stockLow
+// shortcut and knocking early with elevated deadwood is exactly how the
+// AI walks into an undercut. Require deadwood close to the normal
+// threshold instead of accepting anything up to 10 once the stock runs
+// low. Gated the same way as the rest of the tendencies system: only
+// Advanced/Expert, only once 3+ hands are tracked, only against a human
+// whose own knock pattern actually shows this (avgKnockDeadwood <= 3).
+function stockLowKnockOK(best, threshold, persona){
+  if (!usesLearnedTendencies(persona)) return true;
+  const t = persona.tendencies;
+  if (t.avgKnockDeadwood === null || t.avgKnockDeadwood > 3) return true;
+  return best.deadwood <= Math.max(threshold, 5);
+}
+
 // ---------- meld-completion lookahead (Advanced/Expert only) ----------
 //
 // Danger-awareness (above) asks "could this discard help the human."
@@ -1344,7 +1359,7 @@ function computerTurn(){
 
     const effectiveStyle = personaEffectiveStyle(persona);
     const threshold = knockThreshold(effectiveStyle, persona);
-    const stockLow = state.stock.length <= 6;
+    const stockLow = state.stock.length <= 6 && stockLowKnockOK(best, threshold, persona);
     const canKnockNow = best.deadwood <= 10 && (best.deadwood <= threshold || stockLow);
 
     if (canKnockNow){
