@@ -1138,12 +1138,27 @@ function personaEffectiveStyle(persona){
   return persona.style;
 }
 
+// The "Calculated" style doesn't have one fixed knock rule the way
+// Patient or Trapper do. Instead its base threshold slides with the
+// score gap: comfortably ahead, it banks the safe knock rather than
+// risking a bigger hand; meaningfully behind, it holds out closer to
+// Gin the way Patient would. personaEffectiveStyle() already covers the
+// extreme +-20 cases by swapping the whole style, so this only has to
+// handle the closer, more common range in between.
+function calculatedBaseThreshold(){
+  const diff = state.computerScore - state.playerScore;
+  if (diff <= -12) return 5;
+  if (diff >= 12) return 10;
+  return 7;
+}
+
 // persona is optional so callers that don't have adaptive data (or don't
 // need it) can keep calling this with just a style string.
 function knockThreshold(style, persona){
   let base;
   if (style === "patient") base = 5;
   else if (style === "trapper") base = 9;
+  else if (style === "calculated") base = calculatedBaseThreshold();
   else base = 10;
 
   if (persona && usesLearnedTendencies(persona) && persona.tendencies.avgKnockDeadwood !== null){
@@ -1317,6 +1332,14 @@ function computerChooseDraw(persona){
   if (persona.style === "trapper" && state.humanPickupLog.length){
     const danger = dangerScore(topDiscard, state.humanPickupLog, dangerWeights(persona));
     if (danger >= 2 && bestWithDiscard <= currentAnalysis.deadwoodPoints + 2) return "discard";
+  }
+  // Calculated weighs the same denial pickup as Trapper, but only when
+  // the danger reading is clear-cut, since it's splitting its attention
+  // between danger and the score-driven knock timing above rather than
+  // treating denial as its whole game plan.
+  if (persona.style === "calculated" && state.humanPickupLog.length){
+    const danger = dangerScore(topDiscard, state.humanPickupLog, dangerWeights(persona));
+    if (danger >= 3 && bestWithDiscard <= currentAnalysis.deadwoodPoints + 1) return "discard";
   }
   return "stock";
 }
@@ -1928,6 +1951,7 @@ function openStatsModal(profile){
   el.statsTendenciesNote.textContent = describeTendencies(profile);
 
   el.statsMetaTable.innerHTML = `
+    <tr><td>game.js build</td><td class="num">${window.GAME_JS_BUILD || "computing…"}</td></tr>
     <tr><td>Statistics collected since</td><td class="num">${formatDate(stats.since)}</td></tr>
     <tr><td>Hands started</td><td class="num">${stats.handsStarted}</td></tr>
     <tr><td>Hands finished</td><td class="num">${stats.handsFinished}</td></tr>
@@ -1946,6 +1970,56 @@ function openStatsModal(profile){
 }
 
 el.statsCloseBtn.addEventListener("click", () => el.statsModal.classList.add("hidden"));
+
+// ---------- build identification ----------
+//
+// No build step means nothing stamps a version number automatically, and
+// a manually-typed version string is one missed edit away from lying.
+// Instead this hashes the exact file the browser just loaded (a same-
+// origin fetch of game.js itself) with SHA-256 and shows a short
+// fingerprint in the corner of the page and in the Stats modal.
+// simulate.js can hash the same file from disk with the same algorithm
+// (SHA-256, hex, first 10 chars) — if a browser screenshot and a
+// terminal screenshot show the same fingerprint, they're running
+// byte-for-byte the same game.js. If they don't match, that's the
+// answer right there.
+async function computeBuildHash(){
+  try{
+    const res = await fetch("game.js", { cache: "no-store" });
+    const text = await res.text();
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+    const hex = Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, "0")).join("");
+    return hex.slice(0, 10);
+  } catch(e){
+    console.error("Could not compute game.js build hash:", e);
+    return "unknown";
+  }
+}
+
+function showBuildBadge(hash){
+  window.GAME_JS_BUILD = hash;
+  const badge = document.createElement("div");
+  badge.id = "build-badge";
+  badge.textContent = `game.js ${hash}`;
+  Object.assign(badge.style, {
+    position: "fixed", bottom: "6px", right: "8px", zIndex: "9999",
+    fontFamily: "monospace", fontSize: "11px", letterSpacing: "0.02em",
+    color: "rgba(255,255,255,0.5)", background: "rgba(0,0,0,0.35)",
+    padding: "2px 7px", borderRadius: "4px", pointerEvents: "none"
+  });
+  document.body.appendChild(badge);
+}
+
+// Only run in an environment that actually has fetch and SubtleCrypto —
+// a real browser. simulate.js loads this same file into a jsdom window
+// that has neither, so without this guard every simulated hand would
+// throw and log noise on setup. Build identification only matters where
+// a person is looking at the screen, which the harness never is.
+if (typeof fetch === "function" && window.crypto && window.crypto.subtle){
+  computeBuildHash().then(showBuildBadge);
+} else {
+  window.GAME_JS_BUILD = null;
+}
 
 // ---------- boot ----------
 //
