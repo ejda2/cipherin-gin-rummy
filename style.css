@@ -353,6 +353,13 @@ html, body{
   background: rgba(166,50,59,0.25);
   color: rgba(246,241,228,0.5);
 }
+.action-btn.summary{
+  background: transparent;
+  border: 1px solid var(--brass);
+  color: var(--brass-bright);
+}
+.action-btn.summary:hover{ background: rgba(201,162,75,0.15); }
+.action-btn.summary.hidden{ display: none; }
 .ghost-btn-inline{
   background: transparent;
   border: 1px solid var(--line);

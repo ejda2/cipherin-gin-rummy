@@ -588,32 +588,8 @@ const el = {
   statsOppHand: document.getElementById("stats-opp-hand"),
   statsOppGame: document.getElementById("stats-opp-game"),
   statsCloseBtn: document.getElementById("stats-close-btn"),
+  summaryBtn: document.getElementById("summary-btn"),
 };
-
-// Floating "Show Hand Summary" button. Built here (not in index.html) with
-// its own inline styles and position:fixed so it can't disturb any existing
-// layout or grid it gets dropped near — it sits above the table, near the
-// score readouts, independent of the surrounding flow.
-el.summaryBtn = document.createElement("button");
-el.summaryBtn.id = "summary-btn";
-el.summaryBtn.type = "button";
-el.summaryBtn.textContent = "Show Hand Summary";
-Object.assign(el.summaryBtn.style, {
-  position: "fixed",
-  top: "70px",
-  right: "16px",
-  zIndex: "500",
-  padding: "10px 16px",
-  borderRadius: "8px",
-  border: "1px solid #c9a94f",
-  background: "#1b3a2f",
-  color: "#f2e6c2",
-  fontWeight: "600",
-  cursor: "pointer",
-  boxShadow: "0 2px 8px rgba(0,0,0,0.4)",
-  display: "none",
-});
-document.body.appendChild(el.summaryBtn);
 
 function oppName(){
   return (state.opponent && state.opponent.name) ? state.opponent.name : "Computer";
@@ -1554,9 +1530,9 @@ function endRound({ type, knocker }){
 }
 
 function revealHandsThenSummary(onContinue){
-  el.summaryBtn.style.display = "block";
+  el.summaryBtn.classList.remove("hidden");
   const handler = () => {
-    el.summaryBtn.style.display = "none";
+    el.summaryBtn.classList.add("hidden");
     el.summaryBtn.removeEventListener("click", handler);
     showRoundModal(onContinue);
   };
