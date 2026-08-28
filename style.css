@@ -239,6 +239,12 @@ html, body{
 .computer-hand .card{ margin-right: -46px; width: 50px; height: 72px; }
 .computer-hand .card:last-child{ margin-right: 0; }
 
+/* Revealed hand at hand-end: match the player's grouped run/set/deadwood
+   layout and card sizing instead of the compact face-down pile above. */
+.computer-hand.revealed{ min-height: 110px; align-items: flex-end; gap: 22px; }
+.computer-hand.revealed .card{ width: 68px; height: 96px; margin-right: -26px; }
+.computer-hand.revealed .card:last-child{ margin-right: 0; }
+
 /* middle zone */
 .middle-zone{
   display:flex;
@@ -581,6 +587,8 @@ html, body{
   .opponent-zone .hand-label{ font-size: 0.58rem; margin-bottom: 2px; }
   .computer-hand{ min-height: 0; align-items: flex-start; }
   .computer-hand .card{ width: 26px; height: 38px; margin-right: -19px; }
+  .computer-hand.revealed{ min-height: 92px; align-items: flex-end; }
+  .computer-hand.revealed .card{ width: 62px; height: 90px; margin-right: -32px; }
 
   .middle-zone{ gap: 10px; flex-wrap: wrap; }
   .pile-caption{ font-size: 0.62rem; max-width: 100px; }
@@ -609,6 +617,7 @@ html, body{
   .card-suit-center{ font-size: 1.8rem; }
   .player-hand{ gap: 7px; }
   .computer-hand .card{ width: 22px; height: 32px; margin-right: -16px; }
+  .computer-hand.revealed .card{ width: 54px; height: 78px; margin-right: -26px; }
   .brand h1{ font-size: 0.9rem; }
   .score-pill .num{ font-size: 0.95rem; }
 }
@@ -629,6 +638,8 @@ html, body{
   .opponent-zone .hand-label{ font-size: 0.5rem; margin-bottom: 2px; }
   .computer-hand{ min-height: 26px; }
   .computer-hand .card{ width: 20px; height: 29px; margin-right: -15px; }
+  .computer-hand.revealed{ min-height: 58px; }
+  .computer-hand.revealed .card{ width: 46px; height: 66px; margin-right: -16px; }
   .player-zone{ padding: 5px 10px 7px; }
   .player-zone .hand-label{ font-size: 0.54rem; margin-bottom: 3px; }
   .player-hand{ min-height: 58px; gap: 7px; }
