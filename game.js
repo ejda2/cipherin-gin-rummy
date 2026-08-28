@@ -23,6 +23,22 @@ const SKILL_META = {
   expert:       { label: "Expert",       blurb: "Adapts its style to the score as the match develops." }
 };
 
+function capitalizeWord(s){
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : "Unknown";
+}
+
+// Defensive fallbacks: a saved profile can carry a style/skill value that
+// predates a later rename or removal in STYLE_META/SKILL_META above. Rather
+// than throwing when that key is missing (which used to break player-list
+// rendering entirely), fall back to a generic label built from the raw
+// saved value so old profiles still display and remain playable.
+function styleMeta(style){
+  return STYLE_META[style] || { label: capitalizeWord(style), blurb: "This profile's saved style isn't recognized anymore; it plays with default behavior." };
+}
+function skillMeta(skill){
+  return SKILL_META[skill] || { label: capitalizeWord(skill), blurb: "This profile's saved skill level isn't recognized anymore; it plays with default behavior." };
+}
+
 // ---------- basic card helpers ----------
 
 function cardPoints(rank){ return rank >= 10 ? 10 : rank; }
@@ -874,7 +890,7 @@ function updateDeadwoodReadout(){
 function updateOpponentLine(){
   let text = `vs ${oppName()}`;
   if (state.opponent && state.opponent.id){
-    text += ` · ${STYLE_META[state.opponent.style].label} · ${SKILL_META[state.opponent.skill].label}`;
+    text += ` · ${styleMeta(state.opponent.style).label} · ${skillMeta(state.opponent.skill).label}`;
   }
   el.opponentLine.textContent = text;
   el.computerNameLabel.textContent = oppName();
@@ -1662,7 +1678,7 @@ function renderPlayersList(){
     row.innerHTML = `
       <div class="player-row-main">
         <div class="player-row-name">${escapeHtml(profile.name)}</div>
-        <div class="player-row-meta">${profile.gender ? escapeHtml(profile.gender) + " · " : ""}${STYLE_META[profile.style].label} · ${SKILL_META[profile.skill].label}</div>
+        <div class="player-row-meta">${profile.gender ? escapeHtml(profile.gender) + " · " : ""}${styleMeta(profile.style).label} · ${skillMeta(profile.skill).label}</div>
         <div class="player-row-record">Your record vs them: ${record} &middot; ${profile.stats.handsFinished} hands played</div>
       </div>
       <div class="player-row-actions">
@@ -1680,8 +1696,8 @@ function renderPlayersList(){
 }
 
 function updateBlurbs(){
-  el.pfStyleBlurb.textContent = STYLE_META[el.pfStyle.value].blurb;
-  el.pfSkillBlurb.textContent = SKILL_META[el.pfSkill.value].blurb;
+  el.pfStyleBlurb.textContent = styleMeta(el.pfStyle.value).blurb;
+  el.pfSkillBlurb.textContent = skillMeta(el.pfSkill.value).blurb;
 }
 el.pfStyle.addEventListener("change", updateBlurbs);
 el.pfSkill.addEventListener("change", updateBlurbs);
