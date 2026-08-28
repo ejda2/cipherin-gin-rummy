@@ -15,26 +15,13 @@ const UNDERCUT_BONUS = 25;
 const STYLE_META = {
   aggressive: { label: "Aggressive Knocker", blurb: "Knocks the moment deadwood hits 10 or less, keeping low cards to get there fast." },
   patient:    { label: "Patient Gin Seeker", blurb: "Holds out for a full Gin whenever it can, only knocking early if forced." },
-  trapper:    { label: "Defensive Trapper",  blurb: "Tracks what you pick up and avoids discarding cards that could help you." },
-  calculated: { label: "Calculated",         blurb: "Weighs deadwood, danger, and score together rather than following one fixed rule." }
+  trapper:    { label: "Defensive Trapper",  blurb: "Tracks what you pick up and avoids discarding cards that could help you." }
 };
 const SKILL_META = {
   intermediate: { label: "Intermediate", blurb: "Manages its own deadwood but doesn't track your hand." },
   advanced:     { label: "Advanced",     blurb: "Remembers what you've picked up and plays around it." },
   expert:       { label: "Expert",       blurb: "Adapts its style to the score as the match develops." }
 };
-
-// Saved profiles can reference a style or skill value that isn't in the
-// meta tables above (added/removed in an earlier session, or exercised
-// only by simulate.js). Falling back to a placeholder here instead of
-// indexing STYLE_META/SKILL_META directly keeps a stray value from
-// throwing and taking down rendering.
-function styleMeta(style){
-  return STYLE_META[style] || { label: style || "Unknown style", blurb: "" };
-}
-function skillMeta(skill){
-  return SKILL_META[skill] || { label: skill || "Unknown skill", blurb: "" };
-}
 
 // ---------- basic card helpers ----------
 
@@ -509,11 +496,11 @@ const state = {
   currentUid: null,
   opponent: DEFAULT_OPPONENT,
   humanPickupLog: [],
-  humanDiscardLog: [],
   handStartTime: null,
   roundHistory: [],
   playerJustDrawnFromDiscardId: null,
   computerJustDrawnFromDiscardId: null,
+  revealComputerHand: false,
 };
 
 let editingProfileId = null;
@@ -810,11 +797,33 @@ function bindCardDragToDiscard(div, cardId){
 
 function renderComputerHand(){
   el.computerHand.innerHTML = "";
-  for (let i = 0; i < state.computerHand.length; i++){
-    const div = document.createElement("div");
-    div.className = "card card-back";
-    el.computerHand.appendChild(div);
+
+  if (state.revealComputerHand){
+    const groups = computeDisplayGroups(state.computerHand, "suit");
+    groups.forEach(g => {
+      const groupDiv = document.createElement("div");
+      groupDiv.className = "card-group " + (g.type === "meld" ? "meld-group" : "deadwood-group");
+      const label = document.createElement("div");
+      label.className = "group-label";
+      label.textContent = groupLabel(g.type, g.items);
+      groupDiv.appendChild(label);
+      const row = document.createElement("div");
+      row.className = "cards-row";
+      g.items.forEach(({ c }) => {
+        const div = buildCardEl(c, g.type === "meld", false);
+        row.appendChild(div);
+      });
+      groupDiv.appendChild(row);
+      el.computerHand.appendChild(groupDiv);
+    });
+  } else {
+    for (let i = 0; i < state.computerHand.length; i++){
+      const div = document.createElement("div");
+      div.className = "card card-back";
+      el.computerHand.appendChild(div);
+    }
   }
+
   el.computerCount.textContent = state.computerHand.length;
 }
 
@@ -845,7 +854,7 @@ function updateDeadwoodReadout(){
 function updateOpponentLine(){
   let text = `vs ${oppName()}`;
   if (state.opponent && state.opponent.id){
-    text += ` · ${styleMeta(state.opponent.style).label} · ${skillMeta(state.opponent.skill).label}`;
+    text += ` · ${STYLE_META[state.opponent.style].label} · ${SKILL_META[state.opponent.skill].label}`;
   }
   el.opponentLine.textContent = text;
   el.computerNameLabel.textContent = oppName();
@@ -920,11 +929,11 @@ function startRound(){
   state.selectedIndex = null;
   state.locked = false;
   state.humanPickupLog = [];
-  state.humanDiscardLog = [];
   state.humanHandStats = { draws: 0, stockDraws: 0, discards: 0, highCardDiscards: 0 };
   state.handStartTime = Date.now();
   state.playerJustDrawnFromDiscardId = null;
   state.computerJustDrawnFromDiscardId = null;
+  state.revealComputerHand = false;
 
   if (state.opponent && state.opponent.id){
     state.opponent.stats.handsStarted += 1;
@@ -1021,7 +1030,6 @@ function performDiscard(i, asKnock){
 
   state.playerHand = remaining;
   state.discard.push(card);
-  state.humanDiscardLog.push(card);
   state.selectedIndex = null;
   state.humanHandStats.discards += 1;
   if (cardPoints(card.r) >= 10) state.humanHandStats.highCardDiscards += 1;
@@ -1138,27 +1146,12 @@ function personaEffectiveStyle(persona){
   return persona.style;
 }
 
-// The "Calculated" style doesn't have one fixed knock rule the way
-// Patient or Trapper do. Instead its base threshold slides with the
-// score gap: comfortably ahead, it banks the safe knock rather than
-// risking a bigger hand; meaningfully behind, it holds out closer to
-// Gin the way Patient would. personaEffectiveStyle() already covers the
-// extreme +-20 cases by swapping the whole style, so this only has to
-// handle the closer, more common range in between.
-function calculatedBaseThreshold(){
-  const diff = state.computerScore - state.playerScore;
-  if (diff <= -12) return 5;
-  if (diff >= 12) return 10;
-  return 7;
-}
-
 // persona is optional so callers that don't have adaptive data (or don't
 // need it) can keep calling this with just a style string.
 function knockThreshold(style, persona){
   let base;
-  if (style === "patient") base = 5;
-  else if (style === "trapper") base = 9;
-  else if (style === "calculated") base = calculatedBaseThreshold();
+  if (style === "patient") base = 0;
+  else if (style === "trapper") base = 7;
   else base = 10;
 
   if (persona && usesLearnedTendencies(persona) && persona.tendencies.avgKnockDeadwood !== null){
@@ -1171,150 +1164,21 @@ function knockThreshold(style, persona){
   return base;
 }
 
-// Against an opponent who reliably holds out for a near-zero-deadwood
-// knock (Gin, or a razor-thin undercut-proof knock), taking the stockLow
-// shortcut and knocking early with elevated deadwood is exactly how the
-// AI walks into an undercut. Require deadwood close to the normal
-// threshold instead of accepting anything up to 10 once the stock runs
-// low. Gated the same way as the rest of the tendencies system: only
-// Advanced/Expert, only once 3+ hands are tracked, only against a human
-// whose own knock pattern actually shows this (avgKnockDeadwood <= 3).
-function stockLowKnockOK(best, threshold, persona){
-  if (!usesLearnedTendencies(persona)) return true;
-  const t = persona.tendencies;
-  if (t.avgKnockDeadwood === null || t.avgKnockDeadwood > 3) return true;
-  return best.deadwood <= Math.max(threshold, 5);
-}
-
-// ---------- meld-completion lookahead (Advanced/Expert only) ----------
-//
-// Danger-awareness (above) asks "could this discard help the human."
-// This asks the opposite question of the AI's own hand: "how much is
-// this near-meld actually worth keeping," weighted by how many of the
-// cards it still needs are plausibly reachable, rather than treating
-// every two-card start as equally promising. Gated to Advanced/Expert
-// only — Intermediate and plain Trapper/Patient/Aggressive keep the
-// simple deadwood-minimizing behavior they've always had.
-
-function usesLookahead(persona){
-  return persona.skill === "advanced" || persona.skill === "expert";
-}
-
-// Everything not visible in either hand or the discard pile — could be
-// in the stock or in the human's hand, we can't tell which, so it all
-// counts as "unseen" before inference adjusts individual cards.
-function buildUnseenPool(hand){
-  const seen = new Set();
-  hand.forEach(c => seen.add(c.r + c.s));
-  state.discard.forEach(c => seen.add(c.r + c.s));
-  const unseen = [];
-  for (const s of SUITS){
-    for (let r = 1; r <= 13; r++){
-      const key = r + s;
-      if (!seen.has(key)) unseen.push({ r, s });
-    }
-  }
-  return unseen;
-}
-
-// A card that resembles what the human recently picked up is more
-// likely to be sitting in their hand (and so less reachable for us).
-// A card that resembles what they discarded is more likely still
-// floating in the stock (they showed they don't want cards like it).
-// Reuses the same rank/suit-proximity weighting as danger-awareness,
-// just pointed at two different logs and combined into one multiplier
-// centered on 1.0.
-function inferredAvailability(card, persona){
-  const weights = dangerWeights(persona);
-  const heldSignal = dangerScore(card, state.humanPickupLog, weights);
-  const freeSignal = dangerScore(card, state.humanDiscardLog, weights);
-  const raw = 1 + 0.15 * freeSignal - 0.15 * heldSignal;
-  return Math.max(0.3, Math.min(1.8, raw));
-}
-
-function weightedNeedCount(cards, persona){
-  let total = 0;
-  cards.forEach(c => { total += inferredAvailability(c, persona); });
-  return total;
-}
-
-// Scores a hand's deadwood by how "live" its near-melds are: pairs that
-// could become sets, and suited near-neighbors that could become runs,
-// weighted by the (inference-adjusted) fraction of needed cards still
-// unseen. Two deadwood cards sitting on a pair the AI can't complete
-// are worth less to keep than two sitting on a pair with three live
-// outs — this is what lets the AI value hand-building, not just
-// minimizing today's deadwood total.
-function meldCompletionScore(hand, unseen, persona){
-  const totalUnseen = unseen.length;
-  if (totalUnseen === 0) return 0;
-  const analysis = analyzeHand(hand);
-  const deadwoodCards = analysis.deadwoodIdx.map(i => hand[i]);
-  let score = 0;
-
-  const byRank = new Map();
-  deadwoodCards.forEach(c => {
-    if (!byRank.has(c.r)) byRank.set(c.r, []);
-    byRank.get(c.r).push(c);
-  });
-  byRank.forEach((cards, r) => {
-    if (cards.length === 2){
-      const need = weightedNeedCount(unseen.filter(u => u.r === r), persona);
-      score += (need / totalUnseen) * cardPoints(r) * 2;
-    }
-  });
-
-  const bySuit = new Map();
-  deadwoodCards.forEach(c => {
-    if (!bySuit.has(c.s)) bySuit.set(c.s, []);
-    bySuit.get(c.s).push(c);
-  });
-  bySuit.forEach((cards, s) => {
-    const ranks = cards.map(c => c.r).sort((a, b) => a - b);
-    for (let i = 0; i < ranks.length; i++){
-      for (let j = i + 1; j < ranks.length; j++){
-        const gap = ranks[j] - ranks[i];
-        if (gap !== 1 && gap !== 2) continue;
-        const neededRanks = gap === 1
-          ? [ranks[i] - 1, ranks[j] + 1].filter(r => r >= 1 && r <= 13)
-          : [ranks[i] + 1];
-        const need = weightedNeedCount(unseen.filter(u => u.s === s && neededRanks.includes(u.r)), persona);
-        score += (need / totalUnseen) * (cardPoints(ranks[i]) + cardPoints(ranks[j]));
-      }
-    }
-  });
-
-  return score;
-}
-
-// Picks which discard to make among options that are already tied (or
-// near-tied) on deadwood. Danger-awareness and meld-completion lookahead
-// are two independent signals, each gated to the personas that use them,
-// and combine additively so a Trapper-flavored Expert gets both.
-function chooseDiscardCandidate(candidates, persona, hand){
+function pickWithDangerAwareness(candidates, persona, hand){
   if (candidates.length === 1) return candidates[0];
-
-  const dangerAware = usesDangerAwareness(persona) && state.humanPickupLog.length;
-  const lookaheadAware = usesLookahead(persona);
-
-  if (!dangerAware && !lookaheadAware){
-    let bestC = candidates[0], bestPoints = -1;
+  if (usesDangerAwareness(persona) && state.humanPickupLog.length){
+    const weights = dangerWeights(persona);
+    let bestC = candidates[0], bestScore = Infinity;
     for (const c of candidates){
-      const pts = cardPoints(hand[c.discardIndex].r);
-      if (pts > bestPoints){ bestPoints = pts; bestC = c; }
+      const score = dangerScore(hand[c.discardIndex], state.humanPickupLog, weights);
+      if (score < bestScore){ bestScore = score; bestC = c; }
     }
     return bestC;
   }
-
-  const dangerWeightsObj = dangerAware ? dangerWeights(persona) : null;
-  const unseen = lookaheadAware ? buildUnseenPool(hand) : null;
-
-  let bestC = candidates[0], bestScore = -Infinity;
+  let bestC = candidates[0], bestPoints = -1;
   for (const c of candidates){
-    let score = 0;
-    if (lookaheadAware) score += meldCompletionScore(c.remaining, unseen, persona);
-    if (dangerAware) score -= dangerScore(hand[c.discardIndex], state.humanPickupLog, dangerWeightsObj) * 2;
-    if (score > bestScore){ bestScore = score; bestC = c; }
+    const pts = cardPoints(hand[c.discardIndex].r);
+    if (pts > bestPoints){ bestPoints = pts; bestC = c; }
   }
   return bestC;
 }
@@ -1332,14 +1196,6 @@ function computerChooseDraw(persona){
   if (persona.style === "trapper" && state.humanPickupLog.length){
     const danger = dangerScore(topDiscard, state.humanPickupLog, dangerWeights(persona));
     if (danger >= 2 && bestWithDiscard <= currentAnalysis.deadwoodPoints + 2) return "discard";
-  }
-  // Calculated weighs the same denial pickup as Trapper, but only when
-  // the danger reading is clear-cut, since it's splitting its attention
-  // between danger and the score-driven knock timing above rather than
-  // treating denial as its whole game plan.
-  if (persona.style === "calculated" && state.humanPickupLog.length){
-    const danger = dangerScore(topDiscard, state.humanPickupLog, dangerWeights(persona));
-    if (danger >= 3 && bestWithDiscard <= currentAnalysis.deadwoodPoints + 1) return "discard";
   }
   return "stock";
 }
@@ -1382,12 +1238,12 @@ function computerTurn(){
 
     const effectiveStyle = personaEffectiveStyle(persona);
     const threshold = knockThreshold(effectiveStyle, persona);
-    const stockLow = state.stock.length <= 6 && stockLowKnockOK(best, threshold, persona);
+    const stockLow = state.stock.length <= 6;
     const canKnockNow = best.deadwood <= 10 && (best.deadwood <= threshold || stockLow);
 
     if (canKnockNow){
       const knockCandidates = options.filter(o => o.deadwood === best.deadwood);
-      const chosen = chooseDiscardCandidate(knockCandidates, persona, hand);
+      const chosen = pickWithDangerAwareness(knockCandidates, persona, hand);
       const card = hand[chosen.discardIndex];
       state.computerHand = chosen.remaining;
       state.discard.push(card);
@@ -1398,7 +1254,7 @@ function computerTurn(){
     }
 
     const nearBest = options.filter(o => o.deadwood <= best.deadwood + 1);
-    const chosen = chooseDiscardCandidate(nearBest, persona, hand);
+    const chosen = pickWithDangerAwareness(nearBest, persona, hand);
     const card = hand[chosen.discardIndex];
     state.computerHand = chosen.remaining;
     state.discard.push(card);
@@ -1536,6 +1392,8 @@ function recordMatchOutcome(){
 function endRound({ type, knocker }){
   state.locked = true;
   state.phase = null;
+  state.revealComputerHand = true;
+  renderComputerHand();
   recordHandTiming();
   recordTendencies(type, knocker);
 
@@ -1774,7 +1632,7 @@ function renderPlayersList(){
     row.innerHTML = `
       <div class="player-row-main">
         <div class="player-row-name">${escapeHtml(profile.name)}</div>
-        <div class="player-row-meta">${profile.gender ? escapeHtml(profile.gender) + " · " : ""}${styleMeta(profile.style).label} · ${skillMeta(profile.skill).label}</div>
+        <div class="player-row-meta">${profile.gender ? escapeHtml(profile.gender) + " · " : ""}${STYLE_META[profile.style].label} · ${SKILL_META[profile.skill].label}</div>
         <div class="player-row-record">Your record vs them: ${record} &middot; ${profile.stats.handsFinished} hands played</div>
       </div>
       <div class="player-row-actions">
@@ -1792,8 +1650,8 @@ function renderPlayersList(){
 }
 
 function updateBlurbs(){
-  el.pfStyleBlurb.textContent = styleMeta(el.pfStyle.value).blurb;
-  el.pfSkillBlurb.textContent = skillMeta(el.pfSkill.value).blurb;
+  el.pfStyleBlurb.textContent = STYLE_META[el.pfStyle.value].blurb;
+  el.pfSkillBlurb.textContent = SKILL_META[el.pfSkill.value].blurb;
 }
 el.pfStyle.addEventListener("change", updateBlurbs);
 el.pfSkill.addEventListener("change", updateBlurbs);
@@ -1951,7 +1809,6 @@ function openStatsModal(profile){
   el.statsTendenciesNote.textContent = describeTendencies(profile);
 
   el.statsMetaTable.innerHTML = `
-    <tr><td>game.js build</td><td class="num">${window.GAME_JS_BUILD || "computing…"}</td></tr>
     <tr><td>Statistics collected since</td><td class="num">${formatDate(stats.since)}</td></tr>
     <tr><td>Hands started</td><td class="num">${stats.handsStarted}</td></tr>
     <tr><td>Hands finished</td><td class="num">${stats.handsFinished}</td></tr>
@@ -1970,56 +1827,6 @@ function openStatsModal(profile){
 }
 
 el.statsCloseBtn.addEventListener("click", () => el.statsModal.classList.add("hidden"));
-
-// ---------- build identification ----------
-//
-// No build step means nothing stamps a version number automatically, and
-// a manually-typed version string is one missed edit away from lying.
-// Instead this hashes the exact file the browser just loaded (a same-
-// origin fetch of game.js itself) with SHA-256 and shows a short
-// fingerprint in the corner of the page and in the Stats modal.
-// simulate.js can hash the same file from disk with the same algorithm
-// (SHA-256, hex, first 10 chars) — if a browser screenshot and a
-// terminal screenshot show the same fingerprint, they're running
-// byte-for-byte the same game.js. If they don't match, that's the
-// answer right there.
-async function computeBuildHash(){
-  try{
-    const res = await fetch("game.js", { cache: "no-store" });
-    const text = await res.text();
-    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
-    const hex = Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, "0")).join("");
-    return hex.slice(0, 10);
-  } catch(e){
-    console.error("Could not compute game.js build hash:", e);
-    return "unknown";
-  }
-}
-
-function showBuildBadge(hash){
-  window.GAME_JS_BUILD = hash;
-  const badge = document.createElement("div");
-  badge.id = "build-badge";
-  badge.textContent = `game.js ${hash}`;
-  Object.assign(badge.style, {
-    position: "fixed", bottom: "6px", right: "8px", zIndex: "9999",
-    fontFamily: "monospace", fontSize: "11px", letterSpacing: "0.02em",
-    color: "rgba(255,255,255,0.5)", background: "rgba(0,0,0,0.35)",
-    padding: "2px 7px", borderRadius: "4px", pointerEvents: "none"
-  });
-  document.body.appendChild(badge);
-}
-
-// Only run in an environment that actually has fetch and SubtleCrypto —
-// a real browser. simulate.js loads this same file into a jsdom window
-// that has neither, so without this guard every simulated hand would
-// throw and log noise on setup. Build identification only matters where
-// a person is looking at the screen, which the harness never is.
-if (typeof fetch === "function" && window.crypto && window.crypto.subtle){
-  computeBuildHash().then(showBuildBadge);
-} else {
-  window.GAME_JS_BUILD = null;
-}
 
 // ---------- boot ----------
 //
