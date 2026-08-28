@@ -799,22 +799,17 @@ function renderComputerHand(){
   el.computerHand.innerHTML = "";
 
   if (state.revealComputerHand){
-    const groups = computeDisplayGroups(state.computerHand, "suit");
-    groups.forEach(g => {
-      const groupDiv = document.createElement("div");
-      groupDiv.className = "card-group " + (g.type === "meld" ? "meld-group" : "deadwood-group");
-      const label = document.createElement("div");
-      label.className = "group-label";
-      label.textContent = groupLabel(g.type, g.items);
-      groupDiv.appendChild(label);
-      const row = document.createElement("div");
-      row.className = "cards-row";
-      g.items.forEach(({ c }) => {
-        const div = buildCardEl(c, g.type === "meld", false);
-        row.appendChild(div);
-      });
-      groupDiv.appendChild(row);
-      el.computerHand.appendChild(groupDiv);
+    const analysis = analyzeHand(state.computerHand);
+    const meldIndexSet = new Set();
+    analysis.meldMasks.forEach(m => {
+      for (let i = 0; i < state.computerHand.length; i++) if (m & (1 << i)) meldIndexSet.add(i);
+    });
+    const ordered = state.computerHand
+      .map((c, i) => ({ c, i }))
+      .sort((a, b) => (SUITS.indexOf(a.c.s) - SUITS.indexOf(b.c.s)) || (a.c.r - b.c.r));
+    ordered.forEach(({ c, i }) => {
+      const div = buildCardEl(c, meldIndexSet.has(i), false);
+      el.computerHand.appendChild(div);
     });
   } else {
     for (let i = 0; i < state.computerHand.length; i++){
