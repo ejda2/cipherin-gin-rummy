@@ -544,7 +544,6 @@ const el = {
   knockBtn: document.getElementById("knock-btn"),
   sortSuitBtn: document.getElementById("sort-suit-btn"),
   sortRankBtn: document.getElementById("sort-rank-btn"),
-  sortManualBtn: document.getElementById("sort-manual-btn"),
   deadwoodReadout: document.getElementById("deadwood-readout"),
   newMatchBtn: document.getElementById("new-match-btn"),
   playersBtn: document.getElementById("players-btn"),
@@ -908,7 +907,6 @@ function updateButtons(){
 
   el.sortSuitBtn.classList.toggle("active", state.sortMode === "suit");
   el.sortRankBtn.classList.toggle("active", state.sortMode === "rank");
-  el.sortManualBtn.classList.toggle("active", state.sortMode === "manual");
 }
 
 // ---------- generic confirm modal ----------
@@ -1136,7 +1134,6 @@ el.discardPile.addEventListener("drop", (e) => {
 
 el.sortSuitBtn.addEventListener("click", () => { state.sortMode = "suit"; renderAll(); });
 el.sortRankBtn.addEventListener("click", () => { state.sortMode = "rank"; renderAll(); });
-el.sortManualBtn.addEventListener("click", () => { state.sortMode = "manual"; renderAll(); });
 
 el.newMatchBtn.addEventListener("click", () => {
   if (!state.opponent || !state.opponent.id){
