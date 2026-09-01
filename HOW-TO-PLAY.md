@@ -100,9 +100,10 @@ scorecard. (For the full breakdown with a worked example, see the
   warns you before letting it happen.
 - **Players:** click **Players** to create up to 10 computer opponents,
   each with their own name, playing style (Aggressive Knocker, Patient
-  Gin Seeker, or Defensive Trapper), and skill level (Intermediate,
-  Advanced, Expert). Advanced and Expert opponents also learn from how
-  you play against them over time, not just within one hand, so they
+  Gin Seeker, Defensive Trapper, or Calculated), and skill level
+  (Intermediate, Advanced, Expert). Advanced and Expert opponents also
+  learn from how you play against them over time, not just within one
+  hand, so they
   get sharper the more you play a given opponent. Your match record
   and detailed stats against each one are saved to your account —
   click **Stats** next to any player to see them, including a note on

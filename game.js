@@ -15,7 +15,8 @@ const UNDERCUT_BONUS = 25;
 const STYLE_META = {
   aggressive: { label: "Aggressive Knocker", blurb: "Knocks the moment deadwood hits 10 or less, keeping low cards to get there fast." },
   patient:    { label: "Patient Gin Seeker", blurb: "Holds out for a full Gin whenever it can, only knocking early if forced." },
-  trapper:    { label: "Defensive Trapper",  blurb: "Tracks what you pick up and avoids discarding cards that could help you." }
+  trapper:    { label: "Defensive Trapper",  blurb: "Tracks what you pick up and avoids discarding cards that could help you." },
+  calculated: { label: "Calculated",         blurb: "Weighs deadwood, danger, and score together rather than following one fixed rule." }
 };
 const SKILL_META = {
   intermediate: { label: "Intermediate", blurb: "Manages its own deadwood but doesn't track your hand." },
