@@ -93,8 +93,7 @@ scorecard. (For the full breakdown with a worked example, see the
 - **Knock:** click a card once to select it, then click the **Knock**
   button (only enabled when that discard would leave you at 10
   deadwood or less).
-- **Sort your hand:** use **Sort by Suit**, **Sort by Value**, or drag
-  cards into your own order under **Manual Order**.
+- **Sort your hand:** use **Sort by Suit** or **Sort by Value**.
 - **Melds are grouped and labeled automatically** in Sort by Suit/Value
   so you can see your deadwood at a glance.
 - **If a discard would break up an already-formed meld**, the app
