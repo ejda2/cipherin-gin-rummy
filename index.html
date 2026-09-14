@@ -82,11 +82,11 @@
     <div class="left-actions">
       <button id="sort-suit-btn" class="chip-btn active">Sort by Suit</button>
       <button id="sort-rank-btn" class="chip-btn">Sort by Value</button>
-      <button id="discard-btn" class="action-btn discard" disabled>Discard</button>
+      <button id="sort-manual-btn" class="chip-btn">Manual Order</button>
     </div>
     <div class="center-actions">
+      <button id="discard-btn" class="action-btn discard" disabled>Discard</button>
       <button id="knock-btn" class="action-btn knock" disabled>Knock</button>
-      <button id="summary-btn" class="action-btn summary hidden" type="button">Show Hand Summary</button>
     </div>
     <div class="right-actions">
       <span id="deadwood-readout" class="deadwood-readout"></span>
@@ -104,7 +104,7 @@
   <div class="modal-card">
     <h2 id="round-title">Round Result</h2>
     <div id="round-body" class="round-body"></div>
-    <button id="continue-btn" class="action-btn">New Hand</button>
+    <button id="continue-btn" class="action-btn">Continue</button>
   </div>
 </div>
 
@@ -151,7 +151,6 @@
           <option value="aggressive">Aggressive Knocker</option>
           <option value="patient">Patient Gin Seeker</option>
           <option value="trapper">Defensive Trapper</option>
-          <option value="calculated">Calculated</option>
         </select>
       </label>
       <div id="pf-style-blurb" class="field-blurb"></div>
@@ -240,7 +239,7 @@
         <li><strong>Draw:</strong> click the stock pile or the discard pile.</li>
         <li><strong>Discard:</strong> click a card in your hand to select it, then press the Space bar, tap the <strong>Discard</strong> button (for touch devices), or drag it onto the discard pile.</li>
         <li><strong>Knock:</strong> tap a card once to select it, then tap the Knock button.</li>
-        <li><strong>Sort your hand:</strong> Sort by Suit or Sort by Value.</li>
+        <li><strong>Sort your hand:</strong> Sort by Suit, Sort by Value, or drag cards into your own order under Manual Order.</li>
         <li>Melds are grouped and labeled automatically in Sort by Suit/Value.</li>
         <li>If a discard would break up an already-formed meld, the app warns you first.</li>
         <li><strong>Players:</strong> create up to 10 computer opponents with their own name, playing style, and skill level. Click Stats next to any player to see your saved record against them.</li>
@@ -286,6 +285,11 @@
   </div>
 </div>
 
+<script>
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("./sw.js");
+}
+</script>
 <script type="module" src="firebase-init.js"></script>
 <script src="game.js"></script>
 </body>

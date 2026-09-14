@@ -19,7 +19,9 @@ import {
   onAuthStateChanged
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 import {
-  getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentSingleTabManager,
   doc,
   getDoc,
   setDoc
@@ -38,7 +40,16 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const provider = new GoogleAuthProvider();
-const db = getFirestore(app);
+// initializeFirestore + persistentLocalCache turns on an IndexedDB-backed
+// offline cache. Reads serve from that cache when there's no connection,
+// and writes made offline (saveProfiles() -> setDoc) queue there and
+// flush to the server automatically the moment the browser is back
+// online. No custom sync code needed for that part. persistentSingleTabManager
+// assumes the game is only open in one tab at a time on a given device;
+// switch to persistentMultipleTabManager() if that stops being true.
+const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({ tabManager: persistentSingleTabManager() })
+});
 
 // game.js is a plain classic script (not a module), so it can't import
 // these directly. Expose the pieces it needs on window instead. game.js
