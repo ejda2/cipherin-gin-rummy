@@ -1154,18 +1154,6 @@ function calculatedBaseThreshold(){
 // persona is optional so callers that don't have adaptive data (or don't
 // need it) can keep calling this with just a style string.
 function knockThreshold(style, persona){
-  // RACE-TO-KNOCK MODE (temporary calibration experiment): always allow
-  // the maximum legal knock deadwood, for every style, ignoring the
-  // learned-tendencies nudge. This matches the scripted human bot's own
-  // "knock the instant deadwood <= 10" policy exactly, so the two sides
-  // are racing on equal terms. Style-based patience (holding out for a
-  // safer knock or a bigger Gin) is real strategy for a real opponent,
-  // but it costs turns against a bot that never waits — see conversation
-  // notes for the measured effect. Revert to the block below once the
-  // ceiling against this proxy is known.
-  return 10;
-
-  /*
   let base;
   if (style === "patient") base = 5;
   else if (style === "trapper") base = 9;
@@ -1180,7 +1168,6 @@ function knockThreshold(style, persona){
     base = Math.max(0, Math.min(10, Math.round(nudged)));
   }
   return base;
-  */
 }
 
 // Against an opponent who reliably holds out for a near-zero-deadwood
@@ -1341,11 +1328,6 @@ function computerChooseDraw(persona){
 
   if (bestWithDiscard < currentAnalysis.deadwoodPoints || bestWithDiscard <= 10) return "discard";
 
-  // RACE-TO-KNOCK MODE (temporary calibration experiment): denial
-  // pickups deliberately accept extra deadwood to deny the human a
-  // useful card. That's a real defensive tactic, but it costs turns
-  // against a bot racing to knock. Disabled for this test.
-  /*
   if (persona.style === "trapper" && state.humanPickupLog.length){
     const danger = dangerScore(topDiscard, state.humanPickupLog, dangerWeights(persona));
     if (danger >= 2 && bestWithDiscard <= currentAnalysis.deadwoodPoints + 2) return "discard";
@@ -1358,7 +1340,6 @@ function computerChooseDraw(persona){
     const danger = dangerScore(topDiscard, state.humanPickupLog, dangerWeights(persona));
     if (danger >= 3 && bestWithDiscard <= currentAnalysis.deadwoodPoints + 1) return "discard";
   }
-  */
   return "stock";
 }
 
@@ -1976,7 +1957,7 @@ function openStatsModal(profile){
   const gamesTotal = stats.you.gamesWon + stats.you.gamesLost;
 
   el.statsTitle.textContent = `Statistics vs ${profile.name}`;
-  el.statsOppName.textContent = profile.name;
+  el.statsOppName.textContent = `${profile.name} · ${STYLE_META[profile.style].label}`;
   el.statsTendenciesNote.textContent = describeTendencies(profile);
 
   el.statsMetaTable.innerHTML = `
