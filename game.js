@@ -1957,7 +1957,7 @@ function openStatsModal(profile){
   const gamesTotal = stats.you.gamesWon + stats.you.gamesLost;
 
   el.statsTitle.textContent = `Statistics vs ${profile.name}`;
-  el.statsOppName.textContent = `${profile.name} · ${STYLE_META[profile.style].label}`;
+  el.statsOppName.textContent = `${profile.name} · ${styleMeta(profile.style).label}`;
   el.statsTendenciesNote.textContent = describeTendencies(profile);
 
   el.statsMetaTable.innerHTML = `
