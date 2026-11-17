@@ -13,7 +13,7 @@ const GIN_BONUS = 25;
 const UNDERCUT_BONUS = 25;
 
 const STYLE_META = {
-  aggressive: { label: "Aggressive Knocker", blurb: "Knocks the moment deadwood hits 10 or less, keeping low cards to get there fast." },
+  aggressive: { label: "Aggressive Knocker", blurb: "Knocks as early as the hand safely allows, keeping low cards to get there fast." },
   patient:    { label: "Patient Gin Seeker", blurb: "Holds out for a full Gin whenever it can, only knocking early if forced." },
   trapper:    { label: "Defensive Trapper",  blurb: "Tracks what you pick up and avoids discarding cards that could help you." },
   calculated: { label: "Calculated",         blurb: "Weighs deadwood, danger, and score together rather than following one fixed rule." }
@@ -369,7 +369,8 @@ function defaultTendencies(){
     stockPickupRate: null,
     avgKnockDeadwood: null,
     avgKnockTurn: null,
-    runPreference: null
+    runPreference: null,
+    aiUndercutRate: null
   };
 }
 
@@ -407,6 +408,15 @@ function recordTendencies(type, knocker){
     }
   }
 
+  // Track how often the AI's own knocks get undercut, so the knock
+  // ceiling can tighten or loosen itself against this particular human.
+  // Starts from a prior rather than the first sample so one early
+  // undercut doesn't swing it to 100%.
+  if (type === "knock" && knocker === "computer"){
+    const prev = (t.aiUndercutRate === null || t.aiUndercutRate === undefined) ? UNDERCUT_RATE_PRIOR : t.aiUndercutRate;
+    t.aiUndercutRate = prev + UNDERCUT_RATE_ALPHA * ((computerKnockWasUndercut() ? 1 : 0) - prev);
+  }
+
   const keys = Object.keys(sample);
   if (!keys.length) return;
   keys.forEach(key => { t[key] = emaUpdate(t[key], sample[key]); });
@@ -437,7 +447,12 @@ function describeTendencies(profile){
     else if (t.runPreference <= 0.4) bits.push("favor sets over runs");
   }
   const summary = bits.length ? bits.join(", ") : "haven't shown a clear pattern yet";
-  return `Based on ${tracked} hands, you ${summary}. ${profile.name} adjusts its own knock timing and discards to that.`;
+  let caution = "";
+  if (t.aiUndercutRate !== null && t.aiUndercutRate !== undefined){
+    const pct = Math.round(t.aiUndercutRate * 100);
+    caution = ` Recent undercut rate on its knocks: about ${pct}%, so it is knocking ${pct >= 11 ? "more carefully" : pct <= 5 ? "a little earlier" : "at its normal pace"}.`;
+  }
+  return `Based on ${tracked} hands, you ${summary}. ${profile.name} adjusts its own knock timing and discards to that.${caution}`;
 }
 
 async function loadProfiles(uid){
@@ -1185,6 +1200,107 @@ function stockLowKnockOK(best, threshold, persona){
   return best.deadwood <= Math.max(threshold, 5);
 }
 
+// ---------- undercut-aware knock ceiling (Advanced/Expert only) ----------
+//
+// Real-play data (200+ hands per opponent, build 01958fa394) showed the
+// AI's knocks being undercut 17-24% of the time versus 3-7% for the
+// human's knocks, with undercut bonuses alone worth 17-26% of all points
+// the human scored. The style thresholds above ignore how far into the
+// hand it is, and the stockLow shortcut let the AI knock with up to 10
+// late in the hand, exactly when the human's deadwood is lowest.
+//
+// The ceiling caps the knock threshold by how many draws the human has
+// had this hand, tightens further for every discard-pile pickup (each one
+// is usually a meld forming), and then shifts with the AI's own learned
+// undercut rate against this human: lots of undercuts -> tighter, almost
+// none -> looser. The style threshold still applies underneath, so a
+// Patient opponent stays more patient than an Aggressive one.
+
+// Index = human draws so far this hand; last entry covers everything later.
+const KNOCK_CEILING_BY_HUMAN_DRAWS = [10, 10, 10, 10, 9, 8, 7, 6, 5, 4, 3];
+const KNOCK_CEILING_FLOOR = 2;
+const KNOCK_CEILING_PICKUP_PENALTY_MAX = 3;
+const UNDERCUT_RATE_PRIOR = 0.10;
+const UNDERCUT_RATE_ALPHA = 0.10;
+
+function usesUndercutCaution(persona){
+  return !!persona && (persona.skill === "advanced" || persona.skill === "expert");
+}
+
+function learnedUndercutShift(persona){
+  const r = persona.tendencies ? persona.tendencies.aiUndercutRate : null;
+  if (r === null || r === undefined) return 0;
+  if (r >= 0.16) return -2;
+  if (r >= 0.11) return -1;
+  if (r <= 0.05) return 1;
+  return 0;
+}
+
+function knockCeiling(persona){
+  const table = KNOCK_CEILING_BY_HUMAN_DRAWS;
+  const draws = state.humanHandStats ? state.humanHandStats.draws : 0;
+  let ceiling = table[Math.min(draws, table.length - 1)];
+  ceiling -= Math.min(KNOCK_CEILING_PICKUP_PENALTY_MAX, state.humanPickupLog.length);
+  ceiling += learnedUndercutShift(persona);
+  return Math.max(KNOCK_CEILING_FLOOR, Math.min(10, ceiling));
+}
+
+// Same layoff + comparison endRound uses for a computer knock, so the
+// learned rate matches what the stats modal reports.
+function computerKnockWasUndercut(){
+  const playerAnalysis = analyzeHand(state.playerHand);
+  const computerAnalysis = analyzeHand(state.computerHand);
+  const layoff = computeLayoffs(state.computerHand, computerAnalysis.meldMasks,
+    playerAnalysis.deadwoodIdx.map(i => state.playerHand[i]));
+  const defenderDW = layoff.remainingDeadwood.reduce((s, c) => s + cardPoints(c.r), 0);
+  return defenderDW < computerAnalysis.deadwoodPoints;
+}
+
+// Once the AI has decided to knock, the hand is over: meld-completion
+// value and discard danger no longer matter. What does matter is how
+// many of the human's deadwood cards could be laid off on the AI's melds.
+// Among equal-deadwood knock options, pick the arrangement whose melds
+// leave the fewest (and lowest-value) live extension cards, weighting
+// cards that resemble the human's pickups as more likely in their hand.
+function layoffExposure(remaining, discardCard){
+  const seen = new Set();
+  remaining.forEach(c => seen.add(c.r + c.s));
+  state.discard.forEach(c => seen.add(c.r + c.s));
+  seen.add(discardCard.r + discardCard.s);
+  const a = analyzeHand(remaining);
+  let exposure = 0;
+  const consider = (r, s) => {
+    if (r < 1 || r > 13 || seen.has(r + s)) return;
+    const held = dangerScore({ r, s }, state.humanPickupLog, { rank: 2, run: 1 });
+    exposure += cardPoints(r) * (1 + 0.5 * held);
+  };
+  a.meldMasks.forEach(m => {
+    const shape = meldShape(remaining, m);
+    if (shape.type === "set"){
+      if (shape.cards.length < 4){
+        const have = new Set(shape.cards.map(c => c.s));
+        SUITS.forEach(s => { if (!have.has(s)) consider(shape.rank, s); });
+      }
+    } else {
+      consider(shape.min - 1, shape.suit);
+      consider(shape.max + 1, shape.suit);
+    }
+  });
+  return exposure;
+}
+
+function chooseKnockCandidate(candidates, persona, hand){
+  if (candidates.length === 1 || !usesUndercutCaution(persona)){
+    return chooseDiscardCandidate(candidates, persona, hand);
+  }
+  let bestC = candidates[0], bestExp = Infinity;
+  for (const c of candidates){
+    const exp = layoffExposure(c.remaining, hand[c.discardIndex]);
+    if (exp < bestExp){ bestExp = exp; bestC = c; }
+  }
+  return bestC;
+}
+
 // ---------- meld-completion lookahead (Advanced/Expert only) ----------
 //
 // Danger-awareness (above) asks "could this discard help the human."
@@ -1380,13 +1496,19 @@ function computerTurn(){
     }
 
     const effectiveStyle = personaEffectiveStyle(persona);
-    const threshold = knockThreshold(effectiveStyle, persona);
-    const stockLow = state.stock.length <= 6 && stockLowKnockOK(best, threshold, persona);
+    const styleThreshold = knockThreshold(effectiveStyle, persona);
+    const cautious = usesUndercutCaution(persona);
+    const threshold = cautious ? Math.min(styleThreshold, knockCeiling(persona)) : styleThreshold;
+    // The stockLow shortcut (knock with anything up to 10 once the stock
+    // is nearly gone) is kept for Intermediate only. For Advanced/Expert
+    // the ceiling already reflects how late it is, and late is when a
+    // 10-point knock is most likely to be undercut.
+    const stockLow = !cautious && state.stock.length <= 6 && stockLowKnockOK(best, threshold, persona);
     const canKnockNow = best.deadwood <= 10 && (best.deadwood <= threshold || stockLow);
 
     if (canKnockNow){
       const knockCandidates = options.filter(o => o.deadwood === best.deadwood);
-      const chosen = chooseDiscardCandidate(knockCandidates, persona, hand);
+      const chosen = chooseKnockCandidate(knockCandidates, persona, hand);
       const card = hand[chosen.discardIndex];
       state.computerHand = chosen.remaining;
       state.discard.push(card);
